@@ -125,31 +125,10 @@ function update_ensemble!(gmgd::GMNVIObj{FT, IT}, func::Function, dt_max::FT) wh
     ∇²logρ_mean = zeros(N_modes, N_x, N_x)
 
     if diagonal_covariance
-        #TODO there is no need to compute Hesssian in the next line
-        logρ_mean, ∇logρ_mean, _ = compute_logρ_gm_expectation(exp.(logx_w), x_mean, sqrt_xx_cov, inv_sqrt_xx_cov, c_weights_GM, mean_weights_GM, N_ens_GM, Hessian_correct)
-        # compute Hessian 
+        logρ_mean, ∇logρ_mean, ∇²logρ_mean1 = compute_logρ_gm_expectation(exp.(logx_w), x_mean, sqrt_xx_cov, inv_sqrt_xx_cov, c_weights_GM, mean_weights_GM, N_ens_GM, Hessian_correct)
         ∇²logρ_mean = zeros(N_modes, N_x, N_x)
         for dim = 1 : N_x
-            sqrt_xx_cov_dim, inv_sqrt_xx_cov_dim = [], []
-            for im = 1:N_modes
-                sqrt_cov_dim, inv_sqrt_cov_dim = compute_sqrt_matrix(xx_cov[im,dim:dim,dim:dim]; type=sqrt_matrix_type) 
-                push!(sqrt_xx_cov_dim, sqrt_cov_dim)
-                push!(inv_sqrt_xx_cov_dim, inv_sqrt_cov_dim) 
-            end
-            c_weights_GM_dim = zeros(1, size(c_weights_GM,2)) 
-            c_weights_GM_dim[1,:] = c_weights_GM[dim,:]
-            
-            x_w = exp.(logx_w) / sum(exp.(logx_w))
-            xs = zeros(size(x_mean, 1), size(c_weights_GM, 2), size(x_mean, 2))
-            for im = 1:N_modes
-                xs[im,:,:] = construct_ensemble(x_mean[im, :], sqrt_xx_cov[im]; c_weights = c_weights_GM)
-            end
-            
-            logρ, ∇logρ, ∇²logρ = compute_logρ_gm(xs, x_w, x_mean, inv_sqrt_xx_cov, Hessian_correct)
-        
-            for im = 1:N_modes
-                _,_,∇²logρ_mean[im,dim:dim,dim:dim] = compute_expectation(logρ[im,:], ∇logρ[im,:,dim:dim], ∇²logρ[im,:,dim:dim,dim:dim], mean_weights_GM)
-            end
+            ∇²logρ_mean[:,dim,dim] = ∇²logρ_mean1[:,dim,dim]
         end
     else
         logρ_mean, ∇logρ_mean, ∇²logρ_mean = compute_logρ_gm_expectation(exp.(logx_w), x_mean, sqrt_xx_cov, inv_sqrt_xx_cov, c_weights_GM, mean_weights_GM, N_ens_GM, Hessian_correct)
