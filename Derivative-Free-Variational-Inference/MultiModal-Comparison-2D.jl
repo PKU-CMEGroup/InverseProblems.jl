@@ -163,7 +163,7 @@ for j = 1:N_ens
 end
 
 N_iter = 500
-Nx, Ny = 200,200
+Nx, Ny = 100,100
 
 
 
