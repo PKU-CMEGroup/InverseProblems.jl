@@ -34,6 +34,7 @@ Let's start! (⚠️ under construction)
       * [Stein variational inference](Lectures/SteinVariationalInference.ipynb)
       * [Wasserstein gradient flow](Lectures/WassersteinGradientFlow.ipynb)
       * [Affine invariant gradient flows](Lectures/AffineInvariance.ipynb)
+      * [Derivative Free Gaussian Mixture Variational Inference](Lectures/DerivativeFreeVariationalInference.ipynb)
     * Coupling ideas
       * [Filtering](Lectures/Filtering.ipynb)
          * [Kalman filters](Lectures/KalmanFilters.ipynb)
