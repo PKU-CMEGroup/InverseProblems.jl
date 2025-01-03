@@ -75,7 +75,7 @@ end
 
 
 
-fig, ax = PyPlot.subplots(nrows=5, ncols=5, sharex=false, sharey=false, figsize=(20,16))
+fig, ax = PyPlot.subplots(nrows=1, ncols=5, sharex=false, sharey=false, figsize=(4,16))
 
 Random.seed!(111);
 
@@ -112,70 +112,70 @@ visualization_comparison_100d(ax[1,:], ens_MCMC ; Nx = Nx, Ny = Ny, x_lim=[-7.0,
 
 
 
-ση = 1.0
-Gtype = "Four_modes"
-y = [4.2297; 4.2297; 0.5; 0.0; zeros(N_x-2)]
-func_args = (y, ση, 0, Gtype)
-func_F(x) = F(x, func_args)
-func_dPhi(x) = dPhi(x, func_args)
-func_prob(x)=exp(logrho(x, func_args))
-ens_MCMC = [ Run_StretchMove(ens_0[:,1:N_ens], func_prob; output="History", N_iter=N_iter)[1:2,:,:]  for N_ens in N_ens_array ]
-y_2d = y[1:4]
-func_args = (y_2d, ση, A , Gtype)
-func_F(x) = F(x, func_args)
-visualization_comparison_100d(ax[2,:], ens_MCMC ; Nx = Nx, Ny = Ny, x_lim=[-4.0, 4.0], y_lim=[-4, 4], func_F=func_F, 
-    bandwidth=(0.14,0.14), make_label=false,  N_iter= N_iter)
+# ση = 1.0
+# Gtype = "Four_modes"
+# y = [4.2297; 4.2297; 0.5; 0.0; zeros(N_x-2)]
+# func_args = (y, ση, 0, Gtype)
+# func_F(x) = F(x, func_args)
+# func_dPhi(x) = dPhi(x, func_args)
+# func_prob(x)=exp(logrho(x, func_args))
+# ens_MCMC = [ Run_StretchMove(ens_0[:,1:N_ens], func_prob; output="History", N_iter=N_iter)[1:2,:,:]  for N_ens in N_ens_array ]
+# y_2d = y[1:4]
+# func_args = (y_2d, ση, A , Gtype)
+# func_F(x) = F(x, func_args)
+# visualization_comparison_100d(ax[2,:], ens_MCMC ; Nx = Nx, Ny = Ny, x_lim=[-4.0, 4.0], y_lim=[-4, 4], func_F=func_F, 
+#     bandwidth=(0.14,0.14), make_label=false,  N_iter= N_iter)
 
 
 
-ση = [0.5; ones(N_x-2)]
-Gtype = "Circle"
-A = [1.0 1.0; 1.0 2.0]
-y = [1.0; zeros(N_x-2)]
-func_args = (y, ση, A , Gtype)
-func_F(x) = F(x, func_args)
-func_dPhi(x) = dPhi(x, func_args)
-func_prob(x)=exp(logrho(x, func_args))
-ens_MCMC = [ Run_StretchMove(ens_0[:,1:N_ens], func_prob; output="History", N_iter=N_iter)[1:2,:,:]  for N_ens in N_ens_array ]
-y_2d, ση_2d = y[1:1], ση[1:1]
-func_args = (y_2d, ση_2d, A , Gtype)
-func_F(x) = F(x, func_args)
-visualization_comparison_100d(ax[3,:], ens_MCMC; Nx = Nx, Ny = Ny, x_lim=[-3.0, 3.0], y_lim=[-3.0, 3.0], func_F=func_F, 
-    bandwidth=(0.20,0.14), make_label=false,  N_iter= N_iter)
+# ση = [0.5; ones(N_x-2)]
+# Gtype = "Circle"
+# A = [1.0 1.0; 1.0 2.0]
+# y = [1.0; zeros(N_x-2)]
+# func_args = (y, ση, A , Gtype)
+# func_F(x) = F(x, func_args)
+# func_dPhi(x) = dPhi(x, func_args)
+# func_prob(x)=exp(logrho(x, func_args))
+# ens_MCMC = [ Run_StretchMove(ens_0[:,1:N_ens], func_prob; output="History", N_iter=N_iter)[1:2,:,:]  for N_ens in N_ens_array ]
+# y_2d, ση_2d = y[1:1], ση[1:1]
+# func_args = (y_2d, ση_2d, A , Gtype)
+# func_F(x) = F(x, func_args)
+# visualization_comparison_100d(ax[3,:], ens_MCMC; Nx = Nx, Ny = Ny, x_lim=[-3.0, 3.0], y_lim=[-3.0, 3.0], func_F=func_F, 
+#     bandwidth=(0.20,0.14), make_label=false,  N_iter= N_iter)
 
 
 
-ση = [sqrt(10.0); sqrt(10.0); ones(N_x-2)]
-Gtype = "Banana"
-λ = 10.0
-y = [0.0; 1.0; zeros(N_x-2)]
-func_args = (y, ση, λ , Gtype)
-func_F(x) = F(x, func_args)
-func_dPhi(x) = dPhi(x, func_args)
-func_prob(x)=exp(logrho(x, func_args))
-ens_MCMC = [ Run_StretchMove(ens_0[:,1:N_ens], func_prob; output="History", N_iter=N_iter)[1:2,:,:]  for N_ens in N_ens_array ]
-y_2d, ση_2d = y[1:2], ση[1:2]
-func_args = (y_2d, ση_2d, λ , Gtype)
-func_F(x) = F(x, func_args)
-visualization_comparison_100d(ax[4,:], ens_MCMC ; Nx = Nx, Ny = Ny, x_lim=[-4.0, 4.0], y_lim=[-2.0, 10.0], func_F=func_F, 
-    bandwidth=(0.06,0.11), make_label=false,  N_iter= N_iter)
+# ση = [sqrt(10.0); sqrt(10.0); ones(N_x-2)]
+# Gtype = "Banana"
+# λ = 10.0
+# y = [0.0; 1.0; zeros(N_x-2)]
+# func_args = (y, ση, λ , Gtype)
+# func_F(x) = F(x, func_args)
+# func_dPhi(x) = dPhi(x, func_args)
+# func_prob(x)=exp(logrho(x, func_args))
+# ens_MCMC = [ Run_StretchMove(ens_0[:,1:N_ens], func_prob; output="History", N_iter=N_iter)[1:2,:,:]  for N_ens in N_ens_array ]
+# y_2d, ση_2d = y[1:2], ση[1:2]
+# func_args = (y_2d, ση_2d, λ , Gtype)
+# func_F(x) = F(x, func_args)
+# visualization_comparison_100d(ax[4,:], ens_MCMC ; Nx = Nx, Ny = Ny, x_lim=[-4.0, 4.0], y_lim=[-2.0, 10.0], func_F=func_F, 
+#     bandwidth=(0.06,0.11), make_label=false,  N_iter= N_iter)
 
 
 
-ση = [0.3; 1.0; 1.0; ones(N_x-2)]
-Gtype = "Double_banana"
-λ = 100.0
-y = [log(λ+1); 0.0; 0.0; zeros(N_x-2)]
-func_args = (y, ση, λ , Gtype)
-func_F(x) = F(x, func_args)
-func_dPhi(x) = dPhi(x, func_args)
-func_prob(x)=exp(logrho(x, func_args))
-ens_MCMC = [ Run_StretchMove(ens_0[:,1:N_ens], func_prob; output="History", N_iter=N_iter)[1:2,:,:]  for N_ens in N_ens_array ]
-y_2d, ση_2d = y[1:3], ση[1:3]
-func_args = (y_2d, ση_2d, λ , Gtype)
-func_F(x) = F(x, func_args)
-visualization_comparison_100d(ax[5,:], ens_MCMC; Nx = Nx, Ny = Ny, x_lim=[-3.0, 3.0], y_lim=[-3.0, 3.0], func_F=func_F, 
-    bandwidth=(0.06,0.11), make_label=false,  N_iter= N_iter)
+# ση = [0.3; 1.0; 1.0; ones(N_x-2)]
+# Gtype = "Double_banana"
+# λ = 100.0
+# y = [log(λ+1); 0.0; 0.0; zeros(N_x-2)]
+# func_args = (y, ση, λ , Gtype)
+# func_F(x) = F(x, func_args)
+# func_dPhi(x) = dPhi(x, func_args)
+# func_prob(x)=exp(logrho(x, func_args))
+# ens_MCMC = [ Run_StretchMove(ens_0[:,1:N_ens], func_prob; output="History", N_iter=N_iter)[1:2,:,:]  for N_ens in N_ens_array ]
+# y_2d, ση_2d = y[1:3], ση[1:3]
+# func_args = (y_2d, ση_2d, λ , Gtype)
+# func_F(x) = F(x, func_args)
+# visualization_comparison_100d(ax[5,:], ens_MCMC; Nx = Nx, Ny = Ny, x_lim=[-3.0, 3.0], y_lim=[-3.0, 3.0], func_F=func_F, 
+#     bandwidth=(0.06,0.11), make_label=false,  N_iter= N_iter)
 
 
     

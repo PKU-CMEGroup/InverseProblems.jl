@@ -146,9 +146,9 @@ function visualization_1d(ax; Nx=2000, x_lim=[-4.0,4.0], func_F = nothing, func_
     yy_ref = (func_Phi === nothing ? posterior_1d(func_F, xx, "func_F") : posterior_1d(func_Phi, xx, "func_Phi"))
     color_lim = (minimum(yy_ref), maximum(yy_ref))
     
-    ax[1].plot(xx, yy_ref, "--", label="Reference", color="grey", linewidth=2, fillstyle="none", markevery=25)
-    ax[2].plot(xx, yy_ref, "--", label="Reference", color="grey", linewidth=2, fillstyle="none", markevery=25)
-           
+    for i = 1:length(objs)
+        ax[i].plot(xx, yy_ref, "--", label="Reference", color="grey", linewidth=2, fillstyle="none", markevery=25)
+    end       
    
     N_obj = length(objs)
     
