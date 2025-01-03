@@ -66,11 +66,11 @@ function GMWVIObj(# initial condition
                 update_covariance::Bool = true,
                 sqrt_matrix_type::String = "Cholesky",
                 # setup for Gaussian mixture part
-                quadrature_type_GM::String = "cubature_transform_o5",
+                quadrature_type_GM::String = "mean_point",
                 c_weight_GM::FT = sqrt(3.0),
                 N_ens_GM::IT = -1,
                 Hessian_correct_GM::Bool = true,
-                quadrature_type = "unscented_transform",
+                quadrature_type = "mean_point",
                 c_weight_Phi::FT = sqrt(3.0),
                 N_ens::IT = -1,
                 w_min::FT = 1.0e-15) where {FT<:AbstractFloat, IT<:Int}
@@ -202,11 +202,6 @@ function update_ensemble!(gmgd::GMWVIObj{FT, IT}, func::Function, dt_max::FT) wh
         # the second term is independent of k, it is a normalization term
         logx_w_n[im] = logx_w[im] -2* dt*(logρ_mean[im] + Φᵣ_mean[im])
     end
-    # for im = 1:N_modes
-    #     @info "mean = ", x_mean[im, :]
-    #     @info "mean update = ", norm(∇logρ_mean[im, :] + ∇Φᵣ_mean[im, :]), norm(dt*xx_cov_n[im, :, :]*(∇logρ_mean[im, :] + ∇Φᵣ_mean[im, :]))
-    # end
-    # @info "Φᵣ_mean = ", Φᵣ_mean
     
     # Normalization
     w_min = gmgd.w_min
@@ -257,11 +252,11 @@ function GMWVI_Run(
     update_covariance::Bool = true, 
     sqrt_matrix_type::String = "Cholesky",
     # setup for Gaussian mixture part
-    quadrature_type_GM::String = "cubature_transform_o5",
+    quadrature_type_GM::String = "mean_point",
     c_weight_GM::FT = sqrt(3.0),
     N_ens_GM::IT = -1,
     Hessian_correct_GM::Bool = true,
-    quadrature_type = "unscented_transform",
+    quadrature_type = "mean_point",
     c_weight_Phi::FT = sqrt(3.0),
     N_ens::IT = -1,
     w_min::FT = 1.0e-15) where {FT<:AbstractFloat, IT<:Int}
