@@ -1,5 +1,6 @@
 using LinearAlgebra
 using ForwardDiff
+using Random
 # quadrature points
 # C = √C √Cᵀ
 # xᵢ=m+√C cᵢ , here cᵢ ∈ Rᴺ
