@@ -5,9 +5,10 @@ include("../Inversion/AffineInvariantMCMC.jl")
 include("../Inversion/GMNVI.jl")
 include("../Inversion/GMWVI.jl")
 include("../Inversion/Plot.jl")
+include("../Inversion/GMBBVI.jl")
 include("./MultiModal.jl")
 
-function visualization_comparison_2d(ax, obj_GMNVI, obj_GMNVI_D, obj_GMWVI, ens_MCMC ; Nx = 200, Ny = 200, x_lim=[-3.0, 3.0], y_lim=[-3.0, 3.0],
+function visualization_comparison_2d(ax, obj_GMNVI, obj_GMNVI_D, obj_GMWVI, obj_BBVI, ens_MCMC ; Nx = 200, Ny = 200, x_lim=[-3.0, 3.0], y_lim=[-3.0, 3.0],
         func_F = nothing, func_Phi = nothing, bandwidth=nothing, make_label::Bool=false, N_iter=500)
 
         # @assert length(obj_GMWVI)==length(obj_GMNVI)==size(ens_MCMC,2)
@@ -26,7 +27,7 @@ function visualization_comparison_2d(ax, obj_GMNVI, obj_GMNVI_D, obj_GMWVI, ens_
         color_lim = (minimum(Z_ref), maximum(Z_ref))
         ax[1].pcolormesh(X, Y, Z_ref, cmap="viridis", clim=color_lim)
 
-        error = zeros(4, N_iter+1)
+        error = zeros(5, N_iter+1)
 
         #NGF-VI
         if obj_GMNVI!=nothing
@@ -87,6 +88,25 @@ function visualization_comparison_2d(ax, obj_GMNVI, obj_GMNVI_D, obj_GMWVI, ens_
                 end
         end
 
+        #GMBBVI
+        if obj_BBVI !=nothing
+                for iter = 0:N_iter
+                x_w = exp.(obj_BBVI.logx_w[iter+1]); x_w /= sum(x_w)
+                x_mean = obj_BBVI.x_mean[iter+1][:,1:2]
+                xx_cov = obj_BBVI.xx_cov[iter+1][:,1:2,1:2]
+                Z = Gaussian_mixture_2d(x_w, x_mean, xx_cov,  X, Y)
+                error[4, iter+1] = norm(Z - Z_ref,1)*dx*dy
+                
+                if iter == N_iter
+                
+                        ax[5].pcolormesh(X, Y, Z, cmap="viridis", clim=color_lim)
+                        ax[5].scatter([obj_BBVI.x_mean[1][:,1];], [obj_BBVI.x_mean[1][:,2];], marker="x", color="grey", alpha=0.5) 
+                        ax[5].scatter([x_mean[:,1];], [x_mean[:,2];], marker="o", color="red", facecolors="none", alpha=0.5)
+                
+                end
+                end
+        end
+
         #MCMC
         if ens_MCMC!=nothing
                 boundary=((x_lim[1],x_lim[2]),(y_lim[1],y_lim[2]))
@@ -99,7 +119,7 @@ function visualization_comparison_2d(ax, obj_GMNVI, obj_GMNVI_D, obj_GMWVI, ens_
                 end
 
                 Z = kde_iter.density/(sum(kde_iter.density)*dx*dy)
-                error[4, iter+1] = norm(Z - Z_ref,1)*dx*dy
+                error[5, iter+1] = norm(Z - Z_ref,1)*dx*dy
                 
                 if iter == N_iter
                         
@@ -115,36 +135,38 @@ function visualization_comparison_2d(ax, obj_GMNVI, obj_GMNVI_D, obj_GMWVI, ens_
 
                         Z = kde_last.density/(sum(kde_last.density)*dx*dy)
 
-                        ax[5].pcolormesh(X, Y, Z, cmap="viridis", clim=color_lim)
-                        ax[5].scatter(last_ens[1,:], last_ens[2,:], marker=".", color="red", s=10, alpha=100/last_ens_number)
-                        ax[5].set_xlim(x_lim)
-                        ax[5].set_ylim(y_lim)
+                        ax[6].pcolormesh(X, Y, Z, cmap="viridis", clim=color_lim)
+                        ax[6].scatter(last_ens[1,:], last_ens[2,:], marker=".", color="red", s=10, alpha=100/last_ens_number)
+                        ax[6].set_xlim(x_lim)
+                        ax[6].set_ylim(y_lim)
 
                 end
                 end
         end
 
-        ax[6].semilogy(Array(0:N_iter), error', label=["NGF-VI","NGF-VI-D","WGF-VI","MCMC"])   
+        ax[7].semilogy(Array(0:N_iter), error', label=["NGF-VI","NGF-VI-D","WGF-VI","BBVI","MCMC"])   
 
         if make_label==true
-                ax[6].legend()
+                ax[7].legend()
         end
 
         # Get the current y-axis limits
-        ymin, ymax = ax[6].get_ylim()
+        ymin, ymax = ax[7].get_ylim()
         # Ensure the lower bound of y-ticks is below 0.1
         if ymin > 0.1
-                ax[6].set_ylim(0.1, ymax)  # Set the lower limit to a value below 0.1
+                ax[7].set_ylim(0.1, ymax)  # Set the lower limit to a value below 0.1
         end
 
 end
 
 
-# Test the examples in MultiModal-DFGMVI.ipynb with natural gradient flow
+# Test the examples in MultiModal-DFGMVI.ipynb with different methods
 
-N_modes = 40
-N_ens= 1000
-fig, ax = PyPlot.subplots(nrows=5, ncols=6, sharex=false, sharey=false, figsize=(21,17))
+N_modes = 40 # number of modes in Gaussian mixture
+N_ens= 1000 # number of paticles in MCMC
+N_bbvi_sample = 50 # number of samples to compute expectation using Monte Carlo in BBVI
+
+fig, ax = PyPlot.subplots(nrows=5, ncols=7, sharex=false, sharey=false, figsize=(28,17))
 
 
 Random.seed!(111);
@@ -163,13 +185,13 @@ for j = 1:N_ens
 end
 
 N_iter = 500
-Nx, Ny = 200,200
+Nx, Ny = 100,100
 
 
 
 ση = 1.0
 Gtype = "Gaussian"
-dt1 = dt3 = 0.5
+dt1 = dt3 = dt4 = 0.5
 dt2 = 1.4e-1 
 A = [1.0 1.0; 1.0 2.0]
 y = [0.0; 1.0; zeros(N_x-2)]
@@ -177,20 +199,22 @@ func_args = (y, ση, A , Gtype)
 func_F(x) = F(x, func_args)
 func_dPhi(x) = dPhi(x, func_args)
 func_prob(x)=exp(logrho(x, func_args))
+func_Phi(x)= -logrho(x, func_args)
 
-obj_GMNVI = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = false, N_iter = N_iter, dt = dt1)[1]
-obj_GMNVI_D = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = true, N_iter = N_iter, dt = dt3)[1]
+obj_NGFlow = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = false, N_iter = N_iter, dt = dt1)[1]
+obj_NGFlow_D = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = true, N_iter = N_iter, dt = dt3)[1]
 obj_GMWVI = Gaussian_mixture_WGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; N_iter = N_iter, dt = dt2, Hessian_correct_GM=Hessian_correct_GM)[1]
+obj_BBVI = Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov; N_iter = N_iter, dt = dt4, N_ens=N_bbvi_sample)
 ens_MCMC=Run_StretchMove(ens_0,func_prob; output="History", N_iter=N_iter)
 
-visualization_comparison_2d(ax[1,:], obj_GMNVI, obj_GMNVI_D, obj_GMWVI, ens_MCMC ; Nx = Nx, Ny = Ny, x_lim=[-7.0, 5.0], y_lim=[-4.0, 5.0], func_F=func_F, 
-    bandwidth=(0.32,0.22), make_label=false,  N_iter= N_iter)
+visualization_comparison_2d(ax[1,:], obj_NGFlow, obj_NGFlow_D, obj_GMWVI, obj_BBVI, ens_MCMC ; Nx = Nx, Ny = Ny, x_lim=[-7.0, 5.0], y_lim=[-4.0, 5.0], func_F=func_F, 
+    bandwidth=(0.32,0.22), make_label=true,  N_iter= N_iter)
 
 
 
 ση = 1.0
 Gtype = "Four_modes"
-dt1 = dt3 = 0.5
+dt1 = dt3 = dt4 = 0.5
 dt2 = 5e-3
 y = [4.2297; 4.2297; 0.5; 0.0; zeros(N_x-2)]
 func_args = (y, ση, 0, Gtype)
@@ -198,19 +222,20 @@ func_F(x) = F(x, func_args)
 func_dPhi(x) = dPhi(x, func_args)
 func_prob(x)=exp(logrho(x, func_args))
 
-obj_GMNVI = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = false, N_iter = N_iter, dt = dt1)[1]
-obj_GMNVI_D = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = true, N_iter = N_iter, dt = dt3)[1]
+obj_NGFlow = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = false, N_iter = N_iter, dt = dt1)[1]
+obj_NGFlow_D = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = true, N_iter = N_iter, dt = dt3)[1]
 obj_GMWVI = Gaussian_mixture_WGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; N_iter = N_iter, dt = dt2, Hessian_correct_GM=Hessian_correct_GM)[1]
+obj_BBVI = Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov; N_iter = N_iter, dt = dt4, N_ens=N_bbvi_sample)
 ens_MCMC=Run_StretchMove(ens_0,func_prob; output="History", N_iter=N_iter)
 
-visualization_comparison_2d(ax[2,:],  obj_GMNVI, obj_GMNVI_D, obj_GMWVI, ens_MCMC ; Nx = Nx, Ny = Ny, x_lim=[-4.0, 4.0], y_lim=[-4, 4], func_F=func_F, 
+visualization_comparison_2d(ax[2,:],  obj_NGFlow, obj_NGFlow_D, obj_GMWVI, obj_BBVI, ens_MCMC ; Nx = Nx, Ny = Ny, x_lim=[-4.0, 4.0], y_lim=[-4, 4], func_F=func_F, 
     bandwidth=(0.14,0.14), make_label=false,  N_iter= N_iter)
 
 
 
 ση = [0.5; ones(N_x-2)]
 Gtype = "Circle"
-dt1 = dt3 = 0.5
+dt1 = dt3 = dt4 = 0.5
 dt2 = 5e-3
 A = [1.0 1.0; 1.0 2.0]
 y = [1.0; zeros(N_x-2)]
@@ -219,19 +244,20 @@ func_F(x) = F(x, func_args)
 func_dPhi(x) = dPhi(x, func_args)
 func_prob(x)=exp(logrho(x, func_args))
 
-obj_GMNVI = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = false, N_iter = N_iter, dt = dt1)[1]
-obj_GMNVI_D = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = true, N_iter = N_iter, dt = dt3)[1]
+obj_NGFlow = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = false, N_iter = N_iter, dt = dt1)[1]
+obj_NGFlow_D = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = true, N_iter = N_iter, dt = dt3)[1]
 obj_GMWVI = Gaussian_mixture_WGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; N_iter = N_iter, dt = dt2, Hessian_correct_GM=Hessian_correct_GM)[1]
+obj_BBVI = Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov; N_iter = N_iter, dt = dt4, N_ens=N_bbvi_sample)
 ens_MCMC=Run_StretchMove(ens_0,func_prob; output="History", N_iter=N_iter)
 
-visualization_comparison_2d(ax[3,:], obj_GMNVI, obj_GMNVI_D, obj_GMWVI, ens_MCMC ; Nx = Nx, Ny = Ny, x_lim=[-3.0, 3.0], y_lim=[-3.0, 3.0], func_F=func_F, 
+visualization_comparison_2d(ax[3,:], obj_NGFlow, obj_NGFlow_D, obj_GMWVI, obj_BBVI, ens_MCMC ; Nx = Nx, Ny = Ny, x_lim=[-3.0, 3.0], y_lim=[-3.0, 3.0], func_F=func_F, 
     bandwidth=(0.20,0.14), make_label=false,  N_iter= N_iter)
 
 
 
 ση = [sqrt(10.0); sqrt(10.0); ones(N_x-2)]
 Gtype = "Banana"
-dt1 = dt3 = 0.5
+dt1 = dt3 = dt4 = 0.5
 dt2 = 4e-3
 λ = 10.0
 y = [0.0; 1.0; zeros(N_x-2)]
@@ -240,19 +266,20 @@ func_F(x) = F(x, func_args)
 func_dPhi(x) = dPhi(x, func_args)
 func_prob(x)=exp(logrho(x, func_args))
 
-obj_GMNVI = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = false, N_iter = N_iter, dt = dt1)[1]
-obj_GMNVI_D = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = true, N_iter = N_iter, dt = dt3)[1]
+obj_NGFlow = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = false, N_iter = N_iter, dt = dt1)[1]
+obj_NGFlow_D = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = true, N_iter = N_iter, dt = dt3)[1]
 obj_GMWVI = Gaussian_mixture_WGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; N_iter = N_iter, dt = dt2, Hessian_correct_GM=Hessian_correct_GM)[1]
+obj_BBVI = Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov; N_iter = N_iter, dt = dt4, N_ens=N_bbvi_sample)
 ens_MCMC=Run_StretchMove(ens_0,func_prob; output="History", N_iter=N_iter)
 
-visualization_comparison_2d(ax[4,:], obj_GMNVI, obj_GMNVI_D, obj_GMWVI, ens_MCMC ; Nx = Nx, Ny = Ny, x_lim=[-4.0, 4.0], y_lim=[-2.0, 10.0], func_F=func_F, 
+visualization_comparison_2d(ax[4,:], obj_NGFlow, obj_NGFlow_D, obj_GMWVI, obj_BBVI, ens_MCMC ; Nx = Nx, Ny = Ny, x_lim=[-4.0, 4.0], y_lim=[-2.0, 10.0], func_F=func_F, 
     bandwidth=(0.06,0.11), make_label=false,  N_iter= N_iter)
 
 
 
 ση = [0.3; 1.0; 1.0; ones(N_x-2)]
 Gtype = "Double_banana"
-dt1 = dt3 = 0.5
+dt1 = dt3 = dt4 = 0.5
 dt2 = 8e-4
 λ = 100.0
 y = [log(λ+1); 0.0; 0.0; zeros(N_x-2)]
@@ -261,18 +288,19 @@ func_F(x) = F(x, func_args)
 func_dPhi(x) = dPhi(x, func_args)
 func_prob(x)=exp(logrho(x, func_args))
 
-obj_GMNVI = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = false, N_iter = N_iter, dt = dt1)[1]
-obj_GMNVI_D = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = true, N_iter = N_iter, dt = dt3)[1]
+obj_NGFlow = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = false, N_iter = N_iter, dt = dt1)[1]
+obj_NGFlow_D = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = true, N_iter = N_iter, dt = dt3)[1]
 obj_GMWVI = Gaussian_mixture_WGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; N_iter = N_iter, dt = dt2, Hessian_correct_GM=Hessian_correct_GM)[1]
+obj_BBVI = Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov; N_iter = N_iter, dt = dt4, N_ens=N_bbvi_sample)
 ens_MCMC=Run_StretchMove(ens_0,func_prob; output="History", N_iter=N_iter)
 
-visualization_comparison_2d(ax[5,:], obj_GMNVI, obj_GMNVI_D, obj_GMWVI, ens_MCMC ; Nx = Nx, Ny = Ny, x_lim=[-3.0, 3.0], y_lim=[-3.0, 3.0], func_F=func_F, 
+visualization_comparison_2d(ax[5,:], obj_NGFlow, obj_NGFlow_D, obj_GMWVI, obj_BBVI, ens_MCMC ; Nx = Nx, Ny = Ny, x_lim=[-3.0, 3.0], y_lim=[-3.0, 3.0], func_F=func_F, 
     bandwidth=(0.06,0.11), make_label=false,  N_iter= N_iter)
 
 
 
 handles, labels = ax[end, end].get_legend_handles_labels()
-fig.legend(handles,labels,loc = "upper center",bbox_to_anchor=(0.5,1.0),ncol=4)
+fig.legend(handles,labels,loc = "upper center",bbox_to_anchor=(0.5,1.0),ncol=5)
 fig.subplots_adjust(bottom=0.03,top=0.96,left=0.03,right=0.98,hspace=0.2)
 
 fig.savefig("MultiModal-Comparison-2D.pdf")
