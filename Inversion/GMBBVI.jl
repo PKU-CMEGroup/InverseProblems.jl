@@ -112,14 +112,12 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT)
         # E[(x-m)(logρ+Phi)]
         log_ratio_m1 = mean( (x_p[i,:]-x_mean[im,:])*log_ratio[i] for i=1:N_ens)   
 
-        # E[(x-m)(x-m)'(logρ+Phi)]
-        log_ratio_m2 = mean(( x_p[i,:]-x_mean[im,:])*(x_p[i,:]-x_mean[im,:])'*log_ratio[i] for i=1:N_ens)  
+        # E[(x-m)(x-m)'(logρ+Phi)] - E[(x-m)(x-m)'] E(logρ+Phi)
+        # E[(x-m)(x-m)'(logρ+Phi - E(logρ+Phi))] 
+        log_ratio_m2 = mean(( x_p[i,:]-x_mean[im,:])*((x_p[i,:]-x_mean[im,:])'*(log_ratio[i] - log_ratio_mean)) for i=1:N_ens)  
         
-        # E[(x-m)(x-m)']: use sample covarince in the update of xx_cov
-        cov_sample = mean(( x_p[i,:]-x_mean[im,:])*(x_p[i,:]-x_mean[im,:])' for i=1:N_ens)  
-
         d_x_mean[im,:] = -log_ratio_m1
-        d_xx_cov[im,:,:] = -(log_ratio_m2-cov_sample*log_ratio_mean)
+        d_xx_cov[im,:,:] = -log_ratio_m2
         d_logx_w[im] = -log_ratio_mean
 
     end
@@ -129,7 +127,9 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT)
 
     matrix_norm = []
     for im = 1 : N_modes
-        push!(matrix_norm, opnorm( d_xx_cov[im,:,:]*inv(xx_cov[im,:,:]) , 2))
+        # push!(matrix_norm, opnorm( d_xx_cov[im,:,:]*inv(xx_cov[im,:,:]) , 2))
+        push!(matrix_norm, opnorm( d_xx_cov[im,:,:]*inv_sqrt_xx_cov[im]'*inv_sqrt_xx_cov[im], 2))
+        
     end
     # dt = dt_max
     dt = min(dt_max,  0.99 / (maximum(matrix_norm))) # keep the matrix postive definite.
@@ -188,8 +188,8 @@ function Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov;
         w_min = 1.0e-8)
 
     for i in 1:N_iter
-        if i%max(1, div(N_iter, 10)) == 0  @info "iter = ", i, " / ", N_iter  end
-        
+        # if i%max(1, div(N_iter, 10)) == 0  @info "iter = ", i, " / ", N_iter  end
+        @info "iter = ", i, " / ", N_iter 
         update_ensemble!(gmgdobj, func_Phi, dt) 
     end
     
