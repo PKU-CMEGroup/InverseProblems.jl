@@ -188,7 +188,7 @@ function Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov;
         w_min = 1.0e-8)
 
     for i in 1:N_iter
-        if i%div(N_iter, 10) == 0  @info "iter = ", i, " / ", N_iter  end
+        if i%max(1, div(N_iter, 10)) == 0  @info "iter = ", i, " / ", N_iter  end
         
         update_ensemble!(gmgdobj, func_Phi, dt) 
     end

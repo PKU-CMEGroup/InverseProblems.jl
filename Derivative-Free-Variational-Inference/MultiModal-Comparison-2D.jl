@@ -19,6 +19,7 @@ function visualization_comparison_2d(ax, obj_GMNVI, obj_GMNVI_D, obj_GMWVI, obj_
         y_min, y_max = y_lim
 
         xx = LinRange(x_min, x_max, Nx)
+
         yy = LinRange(y_min, y_max, Ny)
         dx, dy = xx[2] - xx[1], yy[2] - yy[1]
         X,Y = repeat(xx, 1, Ny), repeat(yy, 1, Nx)'
@@ -140,7 +141,7 @@ function visualization_comparison_2d(ax, obj_GMNVI, obj_GMNVI_D, obj_GMWVI, obj_
                         ax[6].set_xlim(x_lim)
                         ax[6].set_ylim(y_lim)
 
-                end
+                        end
                 end
         end
 
@@ -272,7 +273,7 @@ obj_GMWVI = Gaussian_mixture_WGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; N_iter = N
 obj_BBVI = Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov; N_iter = N_iter, dt = dt4, N_ens=N_bbvi_sample)
 ens_MCMC=Run_StretchMove(ens_0,func_prob; output="History", N_iter=N_iter)
 
-visualization_comparison_2d(ax[4,:], obj_NGFlow, obj_NGFlow_D, obj_GMWVI, obj_BBVI, ens_MCMC ; Nx = Nx, Ny = Ny, x_lim=[-4.0, 4.0], y_lim=[-2.0, 10.0], func_F=func_F, 
+visualization_comparison_2d(ax[4,:], obj_NGFlow, obj_NGFlow_D, obj_GMWVI, obj_BBVI, ens_MCMC ; Nx = Nx, Ny = Ny, x_lim=[-4.0, 4.0], y_lim=[-2.0, 15.0], func_F=func_F, 
     bandwidth=(0.06,0.11), make_label=false,  N_iter= N_iter)
 
 
@@ -300,7 +301,7 @@ visualization_comparison_2d(ax[5,:], obj_NGFlow, obj_NGFlow_D, obj_GMWVI, obj_BB
 
 
 handles, labels = ax[end, end].get_legend_handles_labels()
-fig.legend(handles,labels,loc = "upper center",bbox_to_anchor=(0.5,1.0),ncol=5)
-fig.subplots_adjust(bottom=0.03,top=0.96,left=0.03,right=0.98,hspace=0.2)
+fig.legend(handles,labels,loc = "upper center",bbox_to_anchor=(0.5,1.0),ncol=5,fontsize=24)
+fig.subplots_adjust(bottom=0.03,top=0.95,left=0.03,right=0.98,hspace=0.2)
 
 fig.savefig("MultiModal-Comparison-2D.pdf")
