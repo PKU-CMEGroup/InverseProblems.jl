@@ -163,7 +163,7 @@ for j = 1:N_ens
 end
 
 N_iter = 500
-Nx, Ny = 200,200
+Nx, Ny = 100,100
 
 
 
@@ -272,7 +272,7 @@ visualization_comparison_2d(ax[5,:], obj_GMNVI, obj_GMNVI_D, obj_GMWVI, ens_MCMC
 
 
 handles, labels = ax[end, end].get_legend_handles_labels()
-fig.legend(handles,labels,loc = "upper center",bbox_to_anchor=(0.5,1.0),ncol=4)
+fig.legend(handles,labels,loc = "upper center",bbox_to_anchor=(0.5,1.0),ncol=4,fontsize=20)
 fig.subplots_adjust(bottom=0.03,top=0.96,left=0.03,right=0.98,hspace=0.2)
 
 fig.savefig("MultiModal-Comparison-2D.pdf")

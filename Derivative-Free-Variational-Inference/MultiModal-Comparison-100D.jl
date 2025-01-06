@@ -75,7 +75,7 @@ end
 
 
 
-fig, ax = PyPlot.subplots(nrows=1, ncols=5, sharex=false, sharey=false, figsize=(4,16))
+fig, ax = PyPlot.subplots(nrows=1, ncols=5, sharex=false, sharey=false, figsize=(20,4))
 
 Random.seed!(111);
 
@@ -91,7 +91,7 @@ for j = 1:N_ens_max
 end 
 
 N_iter = 1000
-Nx, Ny = 200, 200
+Nx, Ny = 100, 100
 
 
 ση = 1.0
@@ -107,7 +107,7 @@ ens_MCMC = [ Run_StretchMove(ens_0[:,1:N_ens], func_prob; output="History", N_it
 y_2d = y[1:2]
 func_args = (y_2d, ση, A , Gtype)
 func_F(x) = F(x, func_args)
-visualization_comparison_100d(ax[1,:], ens_MCMC ; Nx = Nx, Ny = Ny, x_lim=[-7.0, 5.0], y_lim=[-4.0, 5.0], func_F=func_F, 
+visualization_comparison_100d(ax, ens_MCMC ; Nx = Nx, Ny = Ny, x_lim=[-7.0, 5.0], y_lim=[-4.0, 5.0], func_F=func_F, 
     bandwidth=(0.32,0.22), make_label=true,  N_iter= N_iter)
 
 
