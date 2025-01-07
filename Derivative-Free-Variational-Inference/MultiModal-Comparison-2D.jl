@@ -165,7 +165,7 @@ end
 
 N_modes = 40 # number of modes in Gaussian mixture
 N_ens= 1000 # number of paticles in MCMC
-N_bbvi_sample = 50 # number of samples to compute expectation using Monte Carlo in BBVI
+N_bbvi_sample = 5 # number of samples to compute expectation using Monte Carlo in BBVI
 
 fig, ax = PyPlot.subplots(nrows=5, ncols=7, sharex=false, sharey=false, figsize=(28,17))
 
@@ -209,7 +209,7 @@ obj_BBVI = Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov; N_iter = N_it
 ens_MCMC=Run_StretchMove(ens_0,func_prob; output="History", N_iter=N_iter)
 
 visualization_comparison_2d(ax[1,:], obj_NGFlow, obj_NGFlow_D, obj_GMWVI, obj_BBVI, ens_MCMC ; Nx = Nx, Ny = Ny, x_lim=[-7.0, 5.0], y_lim=[-4.0, 5.0], func_F=func_F, 
-    bandwidth=(0.32,0.22), make_label=true,  N_iter= N_iter)
+    bandwidth=(0.32,0.22), make_label=false,  N_iter= N_iter)
 
 
 
