@@ -46,7 +46,7 @@ function visualization_comparison_100d(ax, obj_BBVI= nothing, obj_MCMC = nothing
                 if iter == N_iter
                     
                     last_ens = hcat([ens[:,:,i] for i in N_iter+2-last_n_iters:N_iter+1]...)
-                    last_ens_number =size(last_ens,2)
+                    last_ens_number = size(last_ens,2)
 
                     if bandwidth==nothing
                         kde_last=kde(last_ens'; boundary=boundary, npoints=(Nx,Ny))
@@ -57,7 +57,7 @@ function visualization_comparison_100d(ax, obj_BBVI= nothing, obj_MCMC = nothing
                     Z = kde_last.density/(sum(kde_last.density)*dx*dy)
 
                     ax[i+1].pcolormesh(X, Y, Z, cmap="viridis", clim=color_lim)
-                    ax[i+1].scatter(last_ens[1,1:max(1,div(last_ens_number,1000)):end], last_ens[2,1:max(1,div(last_ens_number,1000)):end], marker=".", color="red", s=10, alpha=100/last_ens_number)
+                    ax[i+1].scatter(last_ens[1,1:max(1,div(last_ens_number,1000)):end], last_ens[2,1:max(1,div(last_ens_number,1000)):end], marker=".", color="red", s=10, alpha=0.05)
                     ax[i+1].set_xlim(x_lim)
                     ax[i+1].set_ylim(y_lim)
 
@@ -103,7 +103,7 @@ function visualization_comparison_100d(ax, obj_BBVI= nothing, obj_MCMC = nothing
     ymin, ymax = ax[5].get_ylim()
 
     # Ensure the lower bound of y-ticks is below 0.1
-    if ymin > 0.1
+    if ymin > 0.1 && ymin < 0.5
         ax[5].set_ylim(0.1, ymax)  # Set the lower limit to a value below 0.1
     end
 
