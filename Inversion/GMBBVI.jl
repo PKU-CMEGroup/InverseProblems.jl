@@ -25,6 +25,8 @@ mutable struct BBVIObj{FT<:AbstractFloat, IT<:Int}
     "update covariance or not"
     update_covariance::Bool
     "weather to keep covariance matrix diagonal"
+    discretize_inv_covariance::Bool
+    "true: discretize from inv(C); false: discretize from C"
     diagonal_covariance::Bool
     "Cholesky, SVD"
     sqrt_matrix_type::String
@@ -40,6 +42,7 @@ function BBVIObj(
                 x0_mean::Array{FT, 2},
                 xx0_cov::Union{Array{FT, 3}, Nothing};
                 update_covariance::Bool = true,
+                discretize_inv_covariance::Bool = true,
                 diagonal_covariance::Bool = false,
                 sqrt_matrix_type::String = "Cholesky",
                 # setup for Gaussian mixture part
@@ -61,7 +64,7 @@ function BBVIObj(
 
     BBVIObj(name,
             logx_w, x_mean, xx_cov, N_modes, N_x,
-            iter, update_covariance, diagonal_covariance,
+            iter, update_covariance, discretize_inv_covariance, diagonal_covariance, 
             sqrt_matrix_type, N_ens, w_min)
 end
 
@@ -72,6 +75,7 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT)
     update_covariance = gmgd.update_covariance
     sqrt_matrix_type = gmgd.sqrt_matrix_type
     diagonal_covariance = gmgd.diagonal_covariance
+    discretize_inv_covariance = gmgd.discretize_inv_covariance
 
     gmgd.iter += 1
     N_x,  N_modes = gmgd.N_x, gmgd.N_modes
@@ -111,7 +115,7 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT)
 
         # E[(x-m)(logρ+Phi)]
         # E[x(logρ+Phi - E(logρ+Phi))]
-        log_ratio_m1 = mean( (x_p[i,:]-x_mean[im,:])*log_ratio[i] for i=1:N_ens)
+        log_ratio_m1 = mean( (x_p[i,:]-x_mean[im,:])*(log_ratio[i] - log_ratio_mean) for i=1:N_ens)   
         # log_ratio_m1 = mean(x_p[i,:]*(log_ratio[i]- log_ratio_mean) for i=1:N_ens)   
 
         # E[(x-m)(x-m)'(logρ+Phi)] - E[(x-m)(x-m)'] E(logρ+Phi)
@@ -130,16 +134,21 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT)
     matrix_norm = []
     for im = 1 : N_modes
         # push!(matrix_norm, opnorm( d_xx_cov[im,:,:]*inv(xx_cov[im,:,:]) , 2))
-        push!(matrix_norm, opnorm( d_xx_cov[im,:,:]*inv_sqrt_xx_cov[im]'*inv_sqrt_xx_cov[im], 2))
+        push!(matrix_norm, opnorm( inv_sqrt_xx_cov[im]*d_xx_cov[im,:,:]*inv_sqrt_xx_cov[im]', 2))
         
     end
     # dt = dt_max
-    dt = min(dt_max,  0.99 / (maximum(matrix_norm))) # keep the matrix postive definite.
+    dt = min(dt_max,  0.9 / (maximum(matrix_norm))) # keep the matrix postive definite.
     # if gmgd.iter%10==0  @show gmgd.iter,dt  end
 
     if update_covariance
-        xx_cov_n += dt * d_xx_cov
+        
         for im =1:N_modes
+            if discretize_inv_covariance
+                xx_cov_n[im,:,:] = xx_cov[im,:,:]*inv(I-dt*inv_sqrt_xx_cov[im]'*inv_sqrt_xx_cov[im]*d_xx_cov[im,:,:])
+            else
+                xx_cov_n[im,:,:] += dt*d_xx_cov[im,:,:]
+            end
             xx_cov_n[im, :, :] = Hermitian(xx_cov_n[im, :, :])
             if diagonal_covariance
                 xx_cov_n[im, :, :] = diagm(diag(xx_cov_n[im, :, :]))
@@ -174,7 +183,7 @@ end
 
 ##########
 function Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov;
-     diagonal_covariance::Bool = false, N_iter = 100, dt = 5.0e-1, N_ens = -1)
+     diagonal_covariance::Bool = false, discretize_inv_covariance::Bool = true, N_iter = 100, dt = 5.0e-1, N_ens = -1)
 
     _, N_x = size(x0_mean) 
     if N_ens == -1 
@@ -185,6 +194,7 @@ function Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov;
         x0_w, x0_mean, xx0_cov;
         update_covariance = true,
         diagonal_covariance = diagonal_covariance,
+        discretize_inv_covariance = discretize_inv_covariance,
         sqrt_matrix_type = "Cholesky",
         N_ens = N_ens,
         w_min = 1.0e-8)
