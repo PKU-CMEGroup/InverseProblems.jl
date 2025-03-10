@@ -93,7 +93,7 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT)
     for im = 1:N_modes 
 
         # generate sampling points subject to Normal(x_mean [im,:], xx_cov[im]), size=(N_ens, N_x)
-        x_p =  construct_ensemble(x_mean[im,:], sqrt_xx_cov[im]; c_weights = nothing, N_ens = N_ens)
+        x_p = construct_ensemble(x_mean[im,:], sqrt_xx_cov[im]; c_weights = nothing, N_ens = N_ens)
         # log_ratio[i] = logρ[x_p[i,:]] + log func_Phi[x_p[i,:]]
         
         # if im==1 && gmgd.iter==1  @show sum((x_p[i,:]-x_mean[im,:])*(x_p[i,:]-x_mean[im,:])'-xx_cov[im,:,:] for i=1:N_ens)/N_ens  end
@@ -111,7 +111,8 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT)
 
         # E[(x-m)(logρ+Phi)]
         # E[x(logρ+Phi - E(logρ+Phi))]
-        log_ratio_m1 = mean(x_p[i,:]*(log_ratio[i]- log_ratio_mean) for i=1:N_ens)   
+        log_ratio_m1 = mean( (x_p[i,:]-x_mean[im,:])*log_ratio[i] for i=1:N_ens)
+        # log_ratio_m1 = mean(x_p[i,:]*(log_ratio[i]- log_ratio_mean) for i=1:N_ens)   
 
         # E[(x-m)(x-m)'(logρ+Phi)] - E[(x-m)(x-m)'] E(logρ+Phi)
         # E[(x-m)(x-m)'(logρ+Phi - E(logρ+Phi))] 
