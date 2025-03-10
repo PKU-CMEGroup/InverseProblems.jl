@@ -240,6 +240,7 @@ function GMNVI_Run(
     diagonal_covariance::Bool = true,
     sqrt_matrix_type::String = "Cholesky",
     # setup for Gaussian mixture part
+    Hessian_correct_GM::Bool = true,
     quadrature_type_GM::String = "mean_point",
     c_weight_GM::FT = sqrt(3.0),
     quadrature_type = "mean_point",
@@ -254,6 +255,7 @@ function GMNVI_Run(
         diagonal_covariance = diagonal_covariance,
         sqrt_matrix_type = sqrt_matrix_type,
         # setup for Gaussian mixture part
+        Hessian_correct_GM = Hessian_correct_GM,
         quadrature_type_GM = quadrature_type_GM,
         c_weight_GM = c_weight_GM,
         quadrature_type = quadrature_type,

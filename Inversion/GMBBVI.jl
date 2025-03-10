@@ -110,7 +110,8 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT)
         log_ratio_mean = mean(log_ratio)
 
         # E[(x-m)(logρ+Phi)]
-        log_ratio_m1 = mean( (x_p[i,:]-x_mean[im,:])*log_ratio[i] for i=1:N_ens)   
+        # E[x(logρ+Phi - E(logρ+Phi))]
+        log_ratio_m1 = mean(x_p[i,:]*(log_ratio[i]- log_ratio_mean) for i=1:N_ens)   
 
         # E[(x-m)(x-m)'(logρ+Phi)] - E[(x-m)(x-m)'] E(logρ+Phi)
         # E[(x-m)(x-m)'(logρ+Phi - E(logρ+Phi))] 
