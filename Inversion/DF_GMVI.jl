@@ -203,11 +203,6 @@ function update_ensemble!(gmgd::DF_GMVIObj{FT, IT}, func::Function, dt_max::FT) 
         # the second term is independent of k, it is a normalization term
         logx_w_n[im] = logx_w[im] - dt*(logρ_mean[im] + Φᵣ_mean[im])
     end
-    # for im = 1:N_modes
-    #     @info "mean = ", x_mean[im, :]
-    #     @info "mean update = ", norm(∇logρ_mean[im, :] + ∇Φᵣ_mean[im, :]), norm(dt*xx_cov_n[im, :, :]*(∇logρ_mean[im, :] + ∇Φᵣ_mean[im, :]))
-    # end
-    # @info "Φᵣ_mean = ", Φᵣ_mean
     
     # Normalization
     w_min = gmgd.w_min
@@ -233,8 +228,6 @@ end
 function ensemble_BIP(x_ens, forward, N_f)
     N_modes, N_ens, N_x = size(x_ens)
     F = zeros(N_modes, N_ens, N_f)   
-    # # TODO debug
-    # return F, nothing, nothing
     
     Threads.@threads for i = 1:N_ens
         for im = 1:N_modes
