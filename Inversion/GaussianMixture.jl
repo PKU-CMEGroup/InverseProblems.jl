@@ -270,7 +270,7 @@ function visualization_2d(ax; Nx=2000, Ny=2000, x_lim=[-4.0,4.0], y_lim=[-4.0,4.
     for i_obj = 1:N_obj
         ax[N_obj+2].semilogy(Array(0:N_iter), error[i_obj, :], 
                         label=(label===nothing ? label : label[i_obj]*" (K="*string(size(objs[i_obj].x_mean[1], 1))*")" ))   
-   end
+    end
     # Get the current y-axis limits
     ymin, ymax = ax[N_obj+2].get_ylim()
     # Ensure the lower bound of y-ticks is below 0.1
