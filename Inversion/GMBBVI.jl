@@ -132,16 +132,15 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT,
     xx_cov_n = copy(xx_cov)
     logx_w_n = copy(logx_w)
 
-    matrix_norm = []
+    matrix_norm, vector_norm = [], []
     for im = 1 : N_modes
-        # push!(matrix_norm, opnorm( d_xx_cov[im,:,:]*inv(xx_cov[im,:,:]) , 2))
         push!(matrix_norm, opnorm( inv_sqrt_xx_cov[im]*d_xx_cov[im,:,:]*inv_sqrt_xx_cov[im]', 2))
+        push!(vector_norm, norm(d_x_mean[im,:,:])/norm(x_mean))
         
     end
     # set an upper bound dt_max, with cos annealing
-    dt = min(dt_max,  (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)) / (maximum(matrix_norm))) # keep the matrix postive definite.
-    
-    @info "dt, |dm|, |dC|, annealing_dt, |C| = ", dt, norm(d_x_mean), norm(d_xx_cov), (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)), maximum(matrix_norm) 
+    dt = min(dt_max,  (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)) / (maximum(matrix_norm)), (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)) / (maximum(vector_norm))) # keep the matrix postive definite.
+    # @info "dt, |dm|, |dC|, annealing_dt, |C| = ", dt, norm(d_x_mean), norm(d_xx_cov), (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)), maximum(matrix_norm) 
     if update_covariance
         
         for im =1:N_modes
@@ -161,7 +160,10 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT,
             end
         end
     end
-    x_mean_n += dt * d_x_mean
+    # for im =1:N_modes
+    #     x_mean_n[im,:] += dt * xx_cov_n[im,:,:]\(xx_cov[im,:,:]*d_x_mean[im,:])
+    # end
+    x_mean_n += dt * d_x_mean 
     logx_w_n += dt * d_logx_w
 
     # Normalization
