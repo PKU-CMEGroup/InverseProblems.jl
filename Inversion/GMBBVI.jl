@@ -70,7 +70,7 @@ end
 
    
 """ func_Phi: the potential function, i.e the posterior is proportional to exp( - func_Phi)"""
-function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT) where {FT<:AbstractFloat, IT<:Int} #从某一步到下一步的步骤
+function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT, iter::IT, N_iter::IT) where {FT<:AbstractFloat, IT<:Int} #从某一步到下一步的步骤
     
     update_covariance = gmgd.update_covariance
     sqrt_matrix_type = gmgd.sqrt_matrix_type
@@ -127,6 +127,7 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT)
         d_logx_w[im] = -log_ratio_mean
 
     end
+    
     x_mean_n = copy(x_mean) 
     xx_cov_n = copy(xx_cov)
     logx_w_n = copy(logx_w)
@@ -137,10 +138,10 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT)
         push!(matrix_norm, opnorm( inv_sqrt_xx_cov[im]*d_xx_cov[im,:,:]*inv_sqrt_xx_cov[im]', 2))
         
     end
-    # dt = dt_max
-    dt = min(dt_max,  0.9 / (maximum(matrix_norm))) # keep the matrix postive definite.
-    # if gmgd.iter%10==0  @show gmgd.iter,dt  end
-
+    # set an upper bound dt_max, with cos annealing
+    dt = min(dt_max,  (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)) / (maximum(matrix_norm))) # keep the matrix postive definite.
+    
+    @info "dt, |dm|, |dC|, annealing_dt, |C| = ", dt, norm(d_x_mean), norm(d_xx_cov), (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)), maximum(matrix_norm) 
     if update_covariance
         
         for im =1:N_modes
@@ -202,7 +203,7 @@ function Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov;
     for i in 1:N_iter
         if i%max(1, div(N_iter, 10)) == 0  @info "iter = ", i, " / ", N_iter  end
         
-        update_ensemble!(gmgdobj, func_Phi, dt) 
+        update_ensemble!(gmgdobj, func_Phi, dt,  i,  N_iter) 
     end
     
     return gmgdobj
