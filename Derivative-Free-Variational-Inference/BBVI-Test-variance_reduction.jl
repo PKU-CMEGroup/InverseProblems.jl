@@ -8,11 +8,11 @@ include("../Inversion/GMBBVI_variance_reduction.jl")
 include("../Derivative-Free-Variational-Inference/MultiModal.jl")
 
 Random.seed!(111);
-N_modes_array = [20] # [10,20,40]    
+N_modes_array = [10] # [10,20,40]
 fig, ax = PyPlot.subplots(nrows=5, ncols=length(N_modes_array)+2, sharex=false, sharey=false, figsize=(20,16))
 
 
-N_x = 5 # 20 # 100
+N_x = 2 # 20 # 100
 μ0, Σ0 = zeros(N_x), 1*Diagonal(ones(N_x))
 
 N_modes = N_modes_array[end]

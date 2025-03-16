@@ -94,7 +94,7 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT,
     N_ens = gmgd.N_ens
     d_logx_w, d_x_mean, d_xx_cov = zeros(N_modes), zeros(N_modes, N_x), zeros(N_modes, N_x, N_x)
 
-    weight_x_p = exp.(logx_w*(0))
+    weight_x_p = exp.(logx_w*(100))
     weight_x_p /= sum(weight_x_p) 
     x_p_num = zeros(Int, N_modes + 1)
     x_p_num[1] = Int(1)

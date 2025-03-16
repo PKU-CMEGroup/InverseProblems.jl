@@ -148,7 +148,6 @@ function update_ensemble!(gmgd::GMNVIObj{FT, IT}, func::Function, dt_max::FT) wh
     for im = 1:N_modes
         Φᵣ_mean[im], ∇Φᵣ_mean[im,:], ∇²Φᵣ_mean[im,:,:] = compute_expectation(V[im,:], ∇V[im,:,:], ∇²V[im,:,:,:], gmgd.mean_weights) 
     end
-    #@info "norm m C", maximum(norm(xx_cov[im, :, :]*(∇logρ_mean[im, :])) for im = 1:N_modes), maximum(norm(xx_cov[im, :, :]*(∇Φᵣ_mean[im, :])) for im = 1:N_modes), maximum(norm(xx_cov[im, :, :]*(∇logρ_mean[im, :]+∇Φᵣ_mean[im, :])) for im = 1:N_modes), norm(∇²logρ_mean), norm(∇²Φᵣ_mean), norm(∇²logρ_mean+∇²Φᵣ_mean)
 
     x_mean_n = copy(x_mean) 
     xx_cov_n = copy(xx_cov)
