@@ -1,6 +1,7 @@
 using LinearAlgebra
 using ForwardDiff
 using Random
+using Distributions
 # quadrature points
 # C = √C √Cᵀ
 # xᵢ=m+√C cᵢ , here cᵢ ∈ Rᴺ
@@ -112,6 +113,15 @@ function construct_ensemble(x_mean, sqrt_cov; c_weights = nothing, N_ens = 100)
             c_weights[:, 1] .= 0.0
             c_weights[:, div(N_ens, 2)+2:end] = -c_weights[:, 2:div(N_ens, 2)+1]
         end
+        # enforce empirical covariance, no need
+        # L = cholesky(c_weights * c_weights'/N_ens).L
+        # c_weights = L\c_weights
+
+        # c_mean = c_weights * ones(N_ens) / N_ens
+        # c_weights = c_weights .- c_mean
+        # L = cholesky(c_weights * c_weights'/N_ens).L
+        # c_weights = L\c_weights
+
 
         xs = ones(N_ens)*x_mean' + (sqrt_cov * c_weights)'
     else
