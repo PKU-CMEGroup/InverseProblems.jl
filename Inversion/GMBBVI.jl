@@ -116,8 +116,7 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT,
         # E[(x-m)(logρ+Phi)]
         # E[x(logρ+Phi - E(logρ+Phi))]
         log_ratio_m1 = mean( (x_p[i,:]-x_mean[im,:])*(log_ratio[i] - log_ratio_mean) for i=1:N_ens)   
-        # log_ratio_m1 = mean(x_p[i,:]*(log_ratio[i]- log_ratio_mean) for i=1:N_ens)   
-
+        
         # E[(x-m)(x-m)'(logρ+Phi)] - E[(x-m)(x-m)'] E(logρ+Phi)
         # E[(x-m)(x-m)'(logρ+Phi - E(logρ+Phi))] 
         log_ratio_m2 = mean(( x_p[i,:]-x_mean[im,:])*((x_p[i,:]-x_mean[im,:])'*(log_ratio[i] - log_ratio_mean)) for i=1:N_ens)  
@@ -132,15 +131,12 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT,
     xx_cov_n = copy(xx_cov)
     logx_w_n = copy(logx_w)
 
-    matrix_norm, vector_norm = [], []
+    matrix_norm = []
     for im = 1 : N_modes
         push!(matrix_norm, opnorm( inv_sqrt_xx_cov[im]*d_xx_cov[im,:,:]*inv_sqrt_xx_cov[im]', 2))
-        push!(vector_norm, norm(d_x_mean[im,:])/(norm(x_mean[im,:]) + 0.01))
-        
     end
     # set an upper bound dt_max, with cos annealing
-    dt = min(dt_max,  (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)) / (maximum(matrix_norm)), (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)) / (maximum(vector_norm))) # keep the matrix postive definite, avoid too large cov/mean update.
-    # @info "dt, |dm|, |dC|, annealing_dt, |C| = ", dt, norm(d_x_mean), norm(d_xx_cov), (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)), maximum(matrix_norm) 
+    dt = min(dt_max,  (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)) / (maximum(matrix_norm))) # keep the matrix postive definite, avoid too large cov/mean update.
     if update_covariance
         
         for im =1:N_modes
@@ -181,12 +177,13 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT,
     push!(gmgd.x_mean, x_mean_n)
     push!(gmgd.xx_cov, xx_cov_n)
     push!(gmgd.logx_w, logx_w_n) 
+
 end
 
 
 ##########
 function Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov;
-     diagonal_covariance::Bool = false, discretize_inv_covariance::Bool = true, N_iter = 100, dt = 5.0e-1, N_ens = -1)
+     diagonal_covariance::Bool = false, discretize_inv_covariance::Bool = true, N_iter = 100, dt = 5.0e-1, N_ens = -1, w_min = 1.0e-8)
 
     _, N_x = size(x0_mean) 
     if N_ens == -1 
@@ -200,7 +197,7 @@ function Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov;
         discretize_inv_covariance = discretize_inv_covariance,
         sqrt_matrix_type = "Cholesky",
         N_ens = N_ens,
-        w_min = 1.0e-8)
+        w_min = w_min)
 
     for i in 1:N_iter
         if i%max(1, div(N_iter, 10)) == 0  @info "iter = ", i, " / ", N_iter  end

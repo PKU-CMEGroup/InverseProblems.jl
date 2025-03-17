@@ -222,6 +222,7 @@ func_args = (y, ση, 0, Gtype)
 func_F(x) = F(x, func_args)
 func_dPhi(x) = dPhi(x, func_args)
 func_prob(x)=exp(logrho(x, func_args))
+func_Phi(x)= -logrho(x, func_args)
 
 obj_NGFlow = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = false, N_iter = N_iter, dt = dt1)[1]
 obj_NGFlow_D = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = true, N_iter = N_iter, dt = dt3)[1]
@@ -244,6 +245,7 @@ func_args = (y, ση, A , Gtype)
 func_F(x) = F(x, func_args)
 func_dPhi(x) = dPhi(x, func_args)
 func_prob(x)=exp(logrho(x, func_args))
+func_Phi(x)= -logrho(x, func_args)
 
 obj_NGFlow = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = false, N_iter = N_iter, dt = dt1)[1]
 obj_NGFlow_D = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = true, N_iter = N_iter, dt = dt3)[1]
@@ -266,6 +268,7 @@ func_args = (y, ση, λ , Gtype)
 func_F(x) = F(x, func_args)
 func_dPhi(x) = dPhi(x, func_args)
 func_prob(x)=exp(logrho(x, func_args))
+func_Phi(x)= -logrho(x, func_args)
 
 obj_NGFlow = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = false, N_iter = N_iter, dt = dt1)[1]
 obj_NGFlow_D = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = true, N_iter = N_iter, dt = dt3)[1]
@@ -288,6 +291,7 @@ func_args = (y, ση, λ , Gtype)
 func_F(x) = F(x, func_args)
 func_dPhi(x) = dPhi(x, func_args)
 func_prob(x)=exp(logrho(x, func_args))
+func_Phi(x)= -logrho(x, func_args)
 
 obj_NGFlow = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = false, N_iter = N_iter, dt = dt1)[1]
 obj_NGFlow_D = Gaussian_mixture_NGFVI(func_dPhi, x0_w, x0_mean, xx0_cov; diagonal_covariance = true, N_iter = N_iter, dt = dt3)[1]
