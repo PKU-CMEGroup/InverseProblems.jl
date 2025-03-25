@@ -126,8 +126,11 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT,
             
             # E[(x-m)(x-m)'(logρ+Phi)] - E[(x-m)(x-m)'] E(logρ+Phi)
             # E[(x-m)(x-m)'(logρ+Phi - E(logρ+Phi))] 
-            log_ratio_m2 = mean(( x_p[i,:]-x_mean[im,:])*((x_p[i,:]-x_mean[im,:])'*(log_ratio[i] - log_ratio_mean)) for i=1:N_ens)  
-            
+
+            log_ratio_m2 =  mean(( x_p[i,:]-x_mean[im,:])*((x_p[i,:]-x_mean[im,:])'*(log_ratio[i] - log_ratio_mean)) for i=1:N_ens)  
+            # log_ratio_m2 = N_ens/(N_ens-1)*mean(( x_p[i,:]-x_mean[im,:])*((x_p[i,:]-x_mean[im,:])'*(log_ratio[i] - log_ratio_mean)) for i=1:N_ens)  
+
+
             d_x_mean[im,:] = -log_ratio_m1
             d_xx_cov[im,:,:] = -log_ratio_m2
             d_logx_w[im] = -log_ratio_mean
@@ -135,16 +138,10 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT,
         end
     else
         x_p = zeros(N_modes*N_ens, N_x)
-        x_p_weight = zeros(N_modes*N_ens)
-
-        sample_weight = x_w   # s_1, s_2, ... , s_K
-        # sample_weight = ones(N_modes)/N_modes
 
         for im =1:N_modes
             x_p[(im-1)*N_ens+1 : im*N_ens, : ] = construct_ensemble(x_mean[im,:], sqrt_xx_cov[im]; c_weights = nothing, N_ens = N_ens)
-            x_p_weight[(im-1)*N_ens+1 : im*N_ens] .= sample_weight[im]/N_ens
         end
-
 
         x_p_density = zeros(N_modes*N_ens, N_modes)
         x_p_Phi = zeros(N_modes*N_ens)
@@ -163,20 +160,35 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT,
         log_ratio_mean = mean(log_ratio)
         log_ratio.-= log_ratio_mean
 
-        x_p_GM = x_p_density * sample_weight  # x_p_GM[i] = Σ s_k*N_k(x_p[i])
-
         for im = 1:N_modes
+            prob = [Gaussian_density_helper(x_mean[im,:], inv_sqrt_xx_cov[im], x_mean[imm,:]) for imm=1:N_modes]
+            # sample_weight = x_w
+            s = zeros(N_modes)
+            for imm = 1:N_modes
+                s[imm] = prob[imm]/prob[im]
+            end
+            sample_weight = exp.(s)
+            # sample_weight[im] = 0.5
+
+            sample_weight = max.(sample_weight, maximum(sample_weight)*1.0e-2)
+            sample_weight /= sum(sample_weight)  # s_1, s_2, ... , s_K
+            x_p_GM = x_p_density * sample_weight  # x_p_GM[i] = Σ s_k*N_k(x_p[i])
+
+            x_p_weight = zeros(N_ens*N_modes)
+            for imm =1:N_modes
+                x_p_weight[(imm-1)*N_ens+1 : imm*N_ens] .= sample_weight[imm]/N_ens
+            end
+
             d_logx_w[im] = -sum(x_p_weight[i]*log_ratio[i]*x_p_density[i,im]/x_p_GM[i] for i = 1:N_modes*N_ens)
-        end
         
-        N = zeros(N_modes*N_ens, N_modes)
-        for im = 1:N_modes, i = 1:N_modes*N_ens
-            N[i,im] = (log_ratio[i] + d_logx_w[im])*x_p_density[i,im]/x_p_GM[i]
-        end
+            N = zeros(N_modes*N_ens)
+            temp = mean(log_ratio[(im-1)*N_ens+1 : im*N_ens])
+            for i = 1:N_modes*N_ens
+                N[i] = (log_ratio[i] - temp)*x_p_density[i,im]/x_p_GM[i]
+            end
 
-        for im = 1:N_modes
-            d_x_mean[im,:] = -sum(x_p_weight[i]*(x_p[i,:]-x_mean[im,:])*N[i,im] for i = 1:N_modes*N_ens)
-            d_xx_cov[im,:,:] = -sum(x_p_weight[i]*(x_p[i,:]-x_mean[im,:])*(x_p[i,:]-x_mean[im,:])'*N[i,im] for i = 1:N_modes*N_ens)
+            d_x_mean[im,:] = -sum(x_p_weight[i]*(x_p[i,:]-x_mean[im,:])*N[i] for i = 1:N_modes*N_ens)
+            d_xx_cov[im,:,:] = -sum(x_p_weight[i]*(x_p[i,:]-x_mean[im,:])*(x_p[i,:]-x_mean[im,:])'*N[i] for i = 1:N_modes*N_ens)
         end
 
     end
@@ -188,8 +200,10 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT,
     for im = 1 : N_modes
         push!(matrix_norm, opnorm( inv_sqrt_xx_cov[im]*d_xx_cov[im,:,:]*inv_sqrt_xx_cov[im]', 2))
     end
+    # @show gmgd.iter, maximum(matrix_norm)
     # set an upper bound dt_max, with cos annealing
-    dt = min(dt_max,  (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)) / (maximum(matrix_norm))) # keep the matrix postive definite, avoid too large cov/mean update.
+    annealing_rate =  (0.01 + (0.9 - 0.01)*cos(pi/2 * iter/N_iter))
+    dt = min(dt_max,  annealing_rate/(maximum(matrix_norm))) # keep the matrix postive definite, avoid too large cov/mean update.
     if update_covariance
         
         for im =1:N_modes

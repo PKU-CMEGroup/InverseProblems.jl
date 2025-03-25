@@ -97,7 +97,7 @@ end
 
    
 
-function update_ensemble!(gmgd::GMNVIObj{FT, IT}, func::Function, dt_max::FT) where {FT<:AbstractFloat, IT<:Int} #从某一步到下一步的步骤
+function update_ensemble!(gmgd::GMNVIObj{FT, IT}, func::Function, dt_max::FT, iter::IT, N_iter::IT) where {FT<:AbstractFloat, IT<:Int} #从某一步到下一步的步骤
     
     update_covariance = gmgd.update_covariance
     sqrt_matrix_type = gmgd.sqrt_matrix_type
@@ -159,7 +159,8 @@ function update_ensemble!(gmgd::GMNVIObj{FT, IT}, func::Function, dt_max::FT) wh
     for i = 1 : N_modes
         push!(matrix_norm, opnorm(xx_cov[i,:,:] * (∇²logρ_mean[i, :, :] + ∇²Φᵣ_mean[i, :, :]), 2))
     end
-    dt = min(dt_max,  0.99 / (maximum(matrix_norm))) # keep the matrix postive definite.
+    # dt = min(dt_max,  0.99 / (maximum(matrix_norm))) # keep the matrix postive definite.
+    dt = min(dt_max,  (0.01 + (0.9 - 0.01)*cos(pi/2 * gmgd.iter/N_iter)) / (maximum(matrix_norm))) # keep the matrix postive definite, avoid too large cov/mean update.
 
 
     ############## update covariance, mean, and weight
@@ -269,7 +270,7 @@ function GMNVI_Run(
     for i in 1:N_iter
         if i%div(N_iter, 10) == 0  @info "iter = ", i, " / ", N_iter  end
         
-        update_ensemble!(gmnviobj, func, dt) 
+        update_ensemble!(gmnviobj, func, dt, i, N_iter) 
     end
     
     return gmnviobj
