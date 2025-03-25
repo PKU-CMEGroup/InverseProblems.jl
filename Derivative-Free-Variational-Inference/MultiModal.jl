@@ -27,6 +27,15 @@ function F(θ, args)
     return (y - Gθ) ./ ση
 end
 
+
+function Phi(θ, args)
+    y, ση, arg, Gtype = args
+    Gθ = G(θ, arg, Gtype )
+    F = (y - Gθ) ./ ση
+
+    return F'*F/2.0
+end
+
 function info_F(Gtype)
     if Gtype == "Gaussian"
         N_θ, N_f = 2, 2
