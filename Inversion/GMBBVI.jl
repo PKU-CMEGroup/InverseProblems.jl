@@ -24,10 +24,12 @@ mutable struct BBVIObj{FT<:AbstractFloat, IT<:Int}
     iter::IT
     "update covariance or not"
     update_covariance::Bool
-    "weather to keep covariance matrix diagonal"
-    discretize_inv_covariance::Bool
     "true: discretize from inv(C); false: discretize from C"
+    discretize_inv_covariance::Bool
+    "weather to keep covariance matrix diagonal"
     diagonal_covariance::Bool
+    "true: calculate expectations using all modes samples; false: using only one mode"
+    gaussian_mixture_sample::Bool
     "Cholesky, SVD"
     sqrt_matrix_type::String
     "number of sampling points (to compute expectation using MC)"
@@ -44,6 +46,7 @@ function BBVIObj(
                 update_covariance::Bool = true,
                 discretize_inv_covariance::Bool = true,
                 diagonal_covariance::Bool = false,
+                gaussian_mixture_sample::Bool = false,
                 sqrt_matrix_type::String = "Cholesky",
                 # setup for Gaussian mixture part
                 N_ens::IT = 10,
@@ -64,121 +67,9 @@ function BBVIObj(
 
     BBVIObj(name,
             logx_w, x_mean, xx_cov, N_modes, N_x,
-            iter, update_covariance, discretize_inv_covariance, diagonal_covariance, 
+            iter, update_covariance, discretize_inv_covariance, diagonal_covariance, gaussian_mixture_sample, 
             sqrt_matrix_type, N_ens, w_min)
 end
-
-   
-# """ func_Phi: the potential function, i.e the posterior is proportional to exp( - func_Phi)"""
-# function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT, iter::IT, N_iter::IT) where {FT<:AbstractFloat, IT<:Int} #从某一步到下一步的步骤
-    
-#     update_covariance = gmgd.update_covariance
-#     sqrt_matrix_type = gmgd.sqrt_matrix_type
-#     diagonal_covariance = gmgd.diagonal_covariance
-#     discretize_inv_covariance = gmgd.discretize_inv_covariance
-
-#     gmgd.iter += 1
-#     N_x,  N_modes = gmgd.N_x, gmgd.N_modes
-
-#     x_mean  = gmgd.x_mean[end]
-#     logx_w  = gmgd.logx_w[end]
-#     xx_cov  = gmgd.xx_cov[end]
-
-#     sqrt_xx_cov, inv_sqrt_xx_cov = [], []
-#     for im = 1:N_modes
-#         sqrt_cov, inv_sqrt_cov = compute_sqrt_matrix(xx_cov[im,:,:]; type=sqrt_matrix_type) 
-#         push!(sqrt_xx_cov, sqrt_cov)
-#         push!(inv_sqrt_xx_cov, inv_sqrt_cov) 
-#     end
-
-#     N_ens = gmgd.N_ens
-#     d_logx_w, d_x_mean, d_xx_cov = zeros(N_modes), zeros(N_modes, N_x), zeros(N_modes, N_x, N_x)
-
-#     for im = 1:N_modes 
-
-#         # generate sampling points subject to Normal(x_mean [im,:], xx_cov[im]), size=(N_ens, N_x)
-#         x_p = construct_ensemble(x_mean[im,:], sqrt_xx_cov[im]; c_weights = nothing, N_ens = N_ens)
-#         # log_ratio[i] = logρ[x_p[i,:]] + log func_Phi[x_p[i,:]]
-        
-#         # if im==1 && gmgd.iter==1  @show sum((x_p[i,:]-x_mean[im,:])*(x_p[i,:]-x_mean[im,:])'-xx_cov[im,:,:] for i=1:N_ens)/N_ens  end
-
-#         log_ratio = zeros(N_ens) 
-#         for i = 1:N_ens
-#             for imm = 1:N_modes
-#                 log_ratio[i] += exp(logx_w[imm])*Gaussian_density_helper(x_mean[imm,:], inv_sqrt_xx_cov[imm], x_p[i,:])
-#             end
-#             log_ratio[i] = log(log_ratio[i])+func_Phi(x_p[i,:])
-#         end
-
-#         # E[logρ+Phi]
-#         log_ratio_mean = mean(log_ratio)
-
-#         # E[(x-m)(logρ+Phi)]
-#         # E[x(logρ+Phi - E(logρ+Phi))]
-#         log_ratio_m1 = mean( (x_p[i,:]-x_mean[im,:])*(log_ratio[i] - log_ratio_mean) for i=1:N_ens)   
-        
-#         # E[(x-m)(x-m)'(logρ+Phi)] - E[(x-m)(x-m)'] E(logρ+Phi)
-#         # E[(x-m)(x-m)'(logρ+Phi - E(logρ+Phi))] 
-#         log_ratio_m2 = mean(( x_p[i,:]-x_mean[im,:])*((x_p[i,:]-x_mean[im,:])'*(log_ratio[i] - log_ratio_mean)) for i=1:N_ens)  
-        
-#         d_x_mean[im,:] = -log_ratio_m1
-#         d_xx_cov[im,:,:] = -log_ratio_m2
-#         d_logx_w[im] = -log_ratio_mean
-
-#     end
-    
-#     x_mean_n = copy(x_mean) 
-#     xx_cov_n = copy(xx_cov)
-#     logx_w_n = copy(logx_w)
-
-#     matrix_norm = []
-#     for im = 1 : N_modes
-#         push!(matrix_norm, opnorm( inv_sqrt_xx_cov[im]*d_xx_cov[im,:,:]*inv_sqrt_xx_cov[im]', 2))
-#     end
-#     # set an upper bound dt_max, with cos annealing
-#     dt = min(dt_max,  (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)) / (maximum(matrix_norm))) # keep the matrix postive definite, avoid too large cov/mean update.
-#     if update_covariance
-        
-#         for im =1:N_modes
-#             if discretize_inv_covariance
-#                 xx_cov_n[im,:,:] = xx_cov[im,:,:]*inv(I-dt*inv_sqrt_xx_cov[im]'*inv_sqrt_xx_cov[im]*d_xx_cov[im,:,:])
-#             else
-#                 xx_cov_n[im,:,:] += dt*d_xx_cov[im,:,:]
-#             end
-#             xx_cov_n[im, :, :] = Hermitian(xx_cov_n[im, :, :])
-#             if diagonal_covariance
-#                 xx_cov_n[im, :, :] = diagm(diag(xx_cov_n[im, :, :]))
-#             end
-#             if !isposdef(Hermitian(xx_cov_n[im, :, :]))
-#                 @show gmgd.iter
-#                 @info "error! negative determinant for mode ", im,  x_mean[im, :], xx_cov[im, :, :], inv(xx_cov[im, :, :])
-#                 @assert(isposdef(xx_cov_n[im, :, :]))
-#             end
-#         end
-#     end
-#     # for im =1:N_modes
-#     #     x_mean_n[im,:] += dt * xx_cov_n[im,:,:]\(xx_cov[im,:,:]*d_x_mean[im,:])
-#     # end
-#     x_mean_n += dt * d_x_mean 
-#     logx_w_n += dt * d_logx_w
-
-#     # Normalization
-#     w_min = gmgd.w_min
-#     logx_w_n .-= maximum(logx_w_n)
-#     logx_w_n .-= log( sum(exp.(logx_w_n)) )
-#     x_w_n = exp.(logx_w_n)
-#     clip_ind = x_w_n .< w_min
-#     x_w_n[clip_ind] .= w_min
-#     x_w_n[(!).(clip_ind)] /= (1 - sum(clip_ind)*w_min)/sum(x_w_n[(!).(clip_ind)])
-#     logx_w_n .= log.(x_w_n)
-    
-    
-#     ######### Save results
-#     push!(gmgd.x_mean, x_mean_n)
-#     push!(gmgd.xx_cov, xx_cov_n)
-#     push!(gmgd.logx_w, logx_w_n) 
-
-# end
 
 
 function ensemble_BBVI(x_ens, forward)
@@ -195,13 +86,13 @@ function ensemble_BBVI(x_ens, forward)
 end
 
 
-""" func_Phi: the potential function, i.e the posterior is proportional to exp( - func_Phi)"""
 function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max::FT, iter::IT, N_iter::IT) where {FT<:AbstractFloat, IT<:Int} #从某一步到下一步的步骤
     
     update_covariance = gmgd.update_covariance
     sqrt_matrix_type = gmgd.sqrt_matrix_type
     diagonal_covariance = gmgd.diagonal_covariance
     discretize_inv_covariance = gmgd.discretize_inv_covariance
+    gaussian_mixture_sample = gmgd.gaussian_mixture_sample
 
     gmgd.iter += 1
     N_x,  N_modes = gmgd.N_x, gmgd.N_modes
@@ -210,6 +101,8 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max
     logx_w  = gmgd.logx_w[end]
     x_w = exp.(logx_w)
     xx_cov  = gmgd.xx_cov[end]
+    x_w = exp.(logx_w)
+    x_w /= sum(x_w)
 
     # compute square root matrix
     sqrt_xx_cov, inv_sqrt_xx_cov = [], []
@@ -251,13 +144,12 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max
 
     end
     
-    
     matrix_norm = []
     for im = 1 : N_modes
         push!(matrix_norm, opnorm( inv_sqrt_xx_cov[im]*d_xx_cov[im,:,:]*inv_sqrt_xx_cov[im]', 2))
     end
     # set an upper bound dt_max, with cos annealing
-    dt = min(dt_max,  (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)) / (maximum(matrix_norm))) # keep the matrix postive definite, avoid too large cov/mean update.
+    dt = min(dt_max,  (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)) / (maximum(matrix_norm))) # keep the matrix postive definite, avoid too large cov update.
     
     ########### update covariances, means, weights
     x_mean_n = copy(x_mean) 
@@ -305,14 +197,15 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max
 end
 
 
-
+""" func_Phi: the potential function, i.e the posterior is proportional to exp( - func_Phi )"""
 ##########
 function Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov;
-     diagonal_covariance::Bool = false, discretize_inv_covariance::Bool = true, N_iter = 100, dt = 5.0e-1, N_ens = -1, w_min = 1.0e-8)
+        diagonal_covariance::Bool = false, discretize_inv_covariance::Bool = true, gaussian_mixture_sample::Bool = false,
+        N_iter = 100, dt = 5.0e-1, N_ens = -1, w_min = 1.0e-8)
 
     _, N_x = size(x0_mean) 
     if N_ens == -1 
-        N_ens = 5*N_x
+        N_ens = 2*N_x+1  
     end
 
     gmgdobj=BBVIObj(
@@ -320,6 +213,7 @@ function Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov;
         update_covariance = true,
         diagonal_covariance = diagonal_covariance,
         discretize_inv_covariance = discretize_inv_covariance,
+        gaussian_mixture_sample = gaussian_mixture_sample,
         sqrt_matrix_type = "Cholesky",
         N_ens = N_ens,
         w_min = w_min)
