@@ -71,9 +71,22 @@ function BBVIObj(
             sqrt_matrix_type, N_ens, w_min)
 end
 
-   
-""" func_Phi: the potential function, i.e the posterior is proportional to exp( - func_Phi)"""
-function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT, iter::IT, N_iter::IT) where {FT<:AbstractFloat, IT<:Int} #从某一步到下一步的步骤
+
+function ensemble_BBVI(x_ens, forward)
+    N_modes, N_ens, N_x = size(x_ens)
+    F = zeros(N_modes, N_ens)   
+    
+    Threads.@threads for i = 1:N_ens
+        for im = 1:N_modes
+            F[im, i] = forward(x_ens[im, i, :])
+        end
+    end
+    
+    return F
+end
+
+
+function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max::FT, iter::IT, N_iter::IT) where {FT<:AbstractFloat, IT<:Int} #从某一步到下一步的步骤
     
     update_covariance = gmgd.update_covariance
     sqrt_matrix_type = gmgd.sqrt_matrix_type
@@ -86,10 +99,12 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT,
 
     x_mean  = gmgd.x_mean[end]
     logx_w  = gmgd.logx_w[end]
+    x_w = exp.(logx_w)
     xx_cov  = gmgd.xx_cov[end]
     x_w = exp.(logx_w)
     x_w /= sum(x_w)
 
+    # compute square root matrix
     sqrt_xx_cov, inv_sqrt_xx_cov = [], []
     for im = 1:N_modes
         sqrt_cov, inv_sqrt_cov = compute_sqrt_matrix(xx_cov[im,:,:]; type=sqrt_matrix_type) 
@@ -98,98 +113,49 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT,
     end
 
     N_ens = gmgd.N_ens
+    ############ Generate sigma points
+    x_p = zeros(N_modes, N_ens, N_x)
+    for im = 1:N_modes
+        x_p[im,:,:] = construct_ensemble(x_mean[im,:], sqrt_xx_cov[im]; c_weights = nothing, N_ens = N_ens)
+    end
+    
+    ########### function evaluation, Φᵣ, N_modes by N_ens
+    Phi_R = ensemble_func(x_p)
+    ########### log rho_a, N_modes by N_ens,  without 1/(2π^N_x/2) in rho_a
+    log_rhoa = log.(Gaussian_mixture_density(x_w, x_mean, inv_sqrt_xx_cov, reshape(x_p, N_modes*N_ens, N_x))) 
+    log_rhoa = reshape(log_rhoa, N_modes, N_ens)    
+    
+    ########### log_rhoa + Phi_R - E[log_rhoa + Phi_R], N_modes by N_ens
+    log_ratio = log_rhoa + Phi_R
+    log_ratio_mean = mean(log_ratio, dims=2)
+    log_ratio_demeaned = log_ratio .- log_ratio_mean
+    
+    ########### compute residuals for covariances, means, weights
     d_logx_w, d_x_mean, d_xx_cov = zeros(N_modes), zeros(N_modes, N_x), zeros(N_modes, N_x, N_x)
 
-    if gaussian_mixture_sample == false
-        for im = 1:N_modes 
-
-            # generate sampling points subject to Normal(x_mean [im,:], xx_cov[im]), size=(N_ens, N_x)
-            x_p = construct_ensemble(x_mean[im,:], sqrt_xx_cov[im]; c_weights = nothing, N_ens = N_ens)
-            # log_ratio[i] = logρ[x_p[i,:]] + log func_Phi[x_p[i,:]]
-            
-            # if im==1 && gmgd.iter==1  @show sum((x_p[i,:]-x_mean[im,:])*(x_p[i,:]-x_mean[im,:])'-xx_cov[im,:,:] for i=1:N_ens)/N_ens  end
-
-            log_ratio = zeros(N_ens) 
-            for i = 1:N_ens
-                for imm = 1:N_modes
-                    log_ratio[i] += exp(logx_w[imm])*Gaussian_density_helper(x_mean[imm,:], inv_sqrt_xx_cov[imm], x_p[i,:])
-                end
-                log_ratio[i] = log(log_ratio[i])+func_Phi(x_p[i,:])
-            end
-
-            # E[logρ+Phi]
-            log_ratio_mean = mean(log_ratio)
-
-            # E[(x-m)(logρ+Phi)]
-            # E[x(logρ+Phi - E(logρ+Phi))]
-            log_ratio_m1 = mean( (x_p[i,:]-x_mean[im,:])*(log_ratio[i] - log_ratio_mean) for i=1:N_ens)   
-            
-            # E[(x-m)(x-m)'(logρ+Phi)] - E[(x-m)(x-m)'] E(logρ+Phi)
-            # E[(x-m)(x-m)'(logρ+Phi - E(logρ+Phi))] 
-            log_ratio_m2 = mean(( x_p[i,:]-x_mean[im,:])*((x_p[i,:]-x_mean[im,:])'*(log_ratio[i] - log_ratio_mean)) for i=1:N_ens)  
-            
-            d_x_mean[im,:] = -log_ratio_m1
-            d_xx_cov[im,:,:] = -log_ratio_m2
-            d_logx_w[im] = -log_ratio_mean
-
-        end
-    else
-        x_p = zeros(N_modes*N_ens, N_x)
-        x_p_weight = zeros(N_modes*N_ens)
-
-        sample_weight = x_w   # s_1, s_2, ... , s_K
-        # sample_weight = ones(N_modes)/N_modes
-
-        for im =1:N_modes
-            x_p[(im-1)*N_ens+1 : im*N_ens, : ] = construct_ensemble(x_mean[im,:], sqrt_xx_cov[im]; c_weights = nothing, N_ens = N_ens)
-            x_p_weight[(im-1)*N_ens+1 : im*N_ens] .= sample_weight[im]/N_ens
-        end
-
-
-        x_p_density = zeros(N_modes*N_ens, N_modes)
-        x_p_Phi = zeros(N_modes*N_ens)
-        # x_p_density[i,im] : Gaussian density of x_p[i,:] at mode im
-        # x_p_Phi : value of Φ(x_p[i,:])
-        for i =1:N_modes*N_ens
-            for im = 1:N_modes
-                x_p_density[i,im] = Gaussian_density_helper(x_mean[im,:], inv_sqrt_xx_cov[im], x_p[i,:])
-            end
-            x_p_Phi[i] = func_Phi(x_p[i,:])
-        end
-
-        ρ_GM = x_p_density * x_w  # ρ_GM[i]= ρ_gm(x_p[i,:]), ρ_gm = Σ w_k*N_k
-        # @show size(ρ_GM), size(x_p_Phi)
-        log_ratio = log.(ρ_GM) + x_p_Phi
-        log_ratio_mean = mean(log_ratio)
-        log_ratio.-= log_ratio_mean
-
-        x_p_GM = x_p_density * sample_weight  # x_p_GM[i] = Σ s_k*N_k(x_p[i])
-
-        for im = 1:N_modes
-            d_logx_w[im] = -sum(x_p_weight[i]*log_ratio[i]*x_p_density[i,im]/x_p_GM[i] for i = 1:N_modes*N_ens)
-        end
+    for im = 1:N_modes 
+        # E[(x-m)(logρ+Phi - E(logρ+Phi))]
+        d_x_mean[im,:] = - log_ratio_demeaned[im, :]' * (x_p[im,:,:] .- x_mean[im,:]') / N_ens   
         
-        N = zeros(N_modes*N_ens, N_modes)
-        for im = 1:N_modes, i = 1:N_modes*N_ens
-            N[i,im] = (log_ratio[i] + d_logx_w[im])*x_p_density[i,im]/x_p_GM[i]
-        end
-
-        for im = 1:N_modes
-            d_x_mean[im,:] = -sum(x_p_weight[i]*(x_p[i,:]-x_mean[im,:])*N[i,im] for i = 1:N_modes*N_ens)
-            d_xx_cov[im,:,:] = -sum(x_p_weight[i]*(x_p[i,:]-x_mean[im,:])*(x_p[i,:]-x_mean[im,:])'*N[i,im] for i = 1:N_modes*N_ens)
-        end
+        # E[(x-m)(x-m)'(logρ+Phi - E(logρ+Phi))] 
+        d_xx_cov[im,:,:] = -(x_p[im,:,:]' .- x_mean[im,:]) * ((x_p[im,:,:] .- x_mean[im,:]') .* log_ratio_demeaned[im,:]) / N_ens
+        
+        d_logx_w[im] = -log_ratio_mean[im]
 
     end
-    x_mean_n = copy(x_mean) 
-    xx_cov_n = copy(xx_cov)
-    logx_w_n = copy(logx_w)
-
+    
     matrix_norm = []
     for im = 1 : N_modes
         push!(matrix_norm, opnorm( inv_sqrt_xx_cov[im]*d_xx_cov[im,:,:]*inv_sqrt_xx_cov[im]', 2))
     end
     # set an upper bound dt_max, with cos annealing
-    dt = min(dt_max,  (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)) / (maximum(matrix_norm))) # keep the matrix postive definite, avoid too large cov/mean update.
+    dt = min(dt_max,  (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)) / (maximum(matrix_norm))) # keep the matrix postive definite, avoid too large cov update.
+    
+    ########### update covariances, means, weights
+    x_mean_n = copy(x_mean) 
+    xx_cov_n = copy(xx_cov)
+    logx_w_n = copy(logx_w)
+
     if update_covariance
         
         for im =1:N_modes
@@ -209,9 +175,6 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT,
             end
         end
     end
-    # for im =1:N_modes
-    #     x_mean_n[im,:] += dt * xx_cov_n[im,:,:]\(xx_cov[im,:,:]*d_x_mean[im,:])
-    # end
     x_mean_n += dt * d_x_mean 
     logx_w_n += dt * d_logx_w
 
@@ -234,6 +197,7 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, func_Phi::Function, dt_max::FT,
 end
 
 
+""" func_Phi: the potential function, i.e the posterior is proportional to exp( - func_Phi )"""
 ##########
 function Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov;
         diagonal_covariance::Bool = false, discretize_inv_covariance::Bool = true, gaussian_mixture_sample::Bool = false,
@@ -254,10 +218,12 @@ function Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov;
         N_ens = N_ens,
         w_min = w_min)
 
+    func(x_ens) = ensemble_BBVI(x_ens, func_Phi) 
+
     for i in 1:N_iter
         if i%max(1, div(N_iter, 10)) == 0  @info "iter = ", i, " / ", N_iter  end
         
-        update_ensemble!(gmgdobj, func_Phi, dt,  i,  N_iter) 
+        update_ensemble!(gmgdobj, func, dt,  i,  N_iter) 
     end
     
     return gmgdobj

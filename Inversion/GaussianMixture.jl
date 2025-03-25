@@ -8,7 +8,27 @@ using DocStringExtensions
 # compute Gaussian density without 1/(2π^N_x/2) at x
 # input : Gaussian mean, the inverse of sqrt(cov), and x
 function Gaussian_density_helper(x_mean::Array{FT,1}, inv_sqrt_xx_cov, x::Array{FT,1}) where {FT<:AbstractFloat}
-    return exp( -1/2*((x - x_mean)'* (inv_sqrt_xx_cov'*inv_sqrt_xx_cov*(x - x_mean)) )) * abs(det(inv_sqrt_xx_cov))
+    tilde_x = inv_sqrt_xx_cov*(x - x_mean)
+    return exp( -1/2*(tilde_x' * tilde_x) ) * abs(det(inv_sqrt_xx_cov))
+    # return exp( -1/2*((x - x_mean)'*(x - x_mean)) )  * abs(det(inv_sqrt_xx_cov))
+
+end
+
+# compute Gaussian mixture density (e.g, ρ) without 1/(2π^N_x/2) at x
+# input : Gaussian mixture weights, means, the inverse of sqrt(covs), and x
+function Gaussian_mixture_density(x_w::Array{FT,1}, x_mean::Array{FT,2}, inv_sqrt_xx_cov, x_p::Array{FT,2}) where {FT<:AbstractFloat}
+    N_modes, N_x = size(x_mean)
+    N_p, _ = size(x_p)
+    ρ = zeros(FT, N_p)
+
+    for im in 1:N_modes
+        x_p_demeaned = x_p .- x_mean[im,:]'            # Compute differences with respect to the mean for all points at once
+        mahalanobis = vec(sum((inv_sqrt_xx_cov[im] * x_p_demeaned') .^ 2, dims=1))  # Vectorized Mahalanobis distance
+        norm_const = det(inv_sqrt_xx_cov[im])  # Normalization constant
+        ρ .+= x_w[im] * norm_const * exp.(-0.5 * mahalanobis)  # Vectorized computation
+    end
+
+    return ρ
 end
 
 
@@ -23,7 +43,7 @@ function Gaussian_mixture_density_derivatives(x_w::Array{FT,1}, x_mean::Array{FT
     ∇²ρ = zeros(N_x, N_x)
    
     for i = 1:N_modes
-        temp = inv_sqrt_xx_cov[i]'*inv_sqrt_xx_cov[i]*(x_mean[i,:] - x)
+        temp = inv_sqrt_xx_cov[i]'*(inv_sqrt_xx_cov[i]*(x_mean[i,:] - x))
         ρᵢ   = Gaussian_density_helper(x_mean[i,:], inv_sqrt_xx_cov[i], x)
     
         ρ   += x_w[i]*ρᵢ
