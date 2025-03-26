@@ -87,7 +87,8 @@ end
 
 function compute_sqrt_matrix(C; type="Cholesky")
     if type == "Cholesky"
-        sqrt_cov, inv_sqrt_cov = cholesky(Hermitian(C)).L,  inv(cholesky(Hermitian(C)).L) 
+        L = cholesky(Hermitian(C)).L
+        sqrt_cov, inv_sqrt_cov = L,  inv(L) 
     elseif type == "SVD"
         U, D, _ = svd(Hermitian(C))
         sqrt_cov, inv_sqrt_cov = U*Diagonal(sqrt.(D)),  Diagonal(sqrt.(1.0./D))*U' 
