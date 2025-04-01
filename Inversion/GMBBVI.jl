@@ -24,12 +24,8 @@ mutable struct BBVIObj{FT<:AbstractFloat, IT<:Int}
     iter::IT
     "update covariance or not"
     update_covariance::Bool
-    "true: discretize from inv(C); false: discretize from C"
-    discretize_inv_covariance::Bool
     "weather to keep covariance matrix diagonal"
     diagonal_covariance::Bool
-    "true: calculate expectations using all modes samples; false: using only one mode"
-    gaussian_mixture_sample::Bool
     "Cholesky, SVD"
     sqrt_matrix_type::String
     "number of sampling points (to compute expectation using MC)"
@@ -44,9 +40,7 @@ function BBVIObj(
                 x0_mean::Array{FT, 2},
                 xx0_cov::Union{Array{FT, 3}, Nothing};
                 update_covariance::Bool = true,
-                discretize_inv_covariance::Bool = true,
                 diagonal_covariance::Bool = false,
-                gaussian_mixture_sample::Bool = false,
                 sqrt_matrix_type::String = "Cholesky",
                 # setup for Gaussian mixture part
                 N_ens::IT = 10,
@@ -67,7 +61,7 @@ function BBVIObj(
 
     BBVIObj(name,
             logx_w, x_mean, xx_cov, N_modes, N_x,
-            iter, update_covariance, discretize_inv_covariance, diagonal_covariance, gaussian_mixture_sample, 
+            iter, update_covariance, diagonal_covariance, 
             sqrt_matrix_type, N_ens, w_min)
 end
 
@@ -91,8 +85,6 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max
     update_covariance = gmgd.update_covariance
     sqrt_matrix_type = gmgd.sqrt_matrix_type
     diagonal_covariance = gmgd.diagonal_covariance
-    discretize_inv_covariance = gmgd.discretize_inv_covariance
-    gaussian_mixture_sample = gmgd.gaussian_mixture_sample
 
     gmgd.iter += 1
     N_x,  N_modes = gmgd.N_x, gmgd.N_modes
@@ -114,9 +106,11 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max
 
     N_ens = gmgd.N_ens
     ############ Generate sigma points
+    x_p_normal = zeros(N_modes, N_ens, N_x)
     x_p = zeros(N_modes, N_ens, N_x)
     for im = 1:N_modes
-        x_p[im,:,:] = construct_ensemble(x_mean[im,:], sqrt_xx_cov[im]; c_weights = nothing, N_ens = N_ens)
+        x_p_normal[im,:,:] = construct_ensemble(zeros(N_x), I(N_x); c_weights = nothing, N_ens = N_ens)
+        x_p[im,:,:] = x_p_normal[im,:,:]*sqrt_xx_cov[im]' .+ x_mean[im,:]'
     end
     
     ########### function evaluation, Φᵣ, N_modes by N_ens
@@ -131,14 +125,14 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max
     log_ratio_demeaned = log_ratio .- log_ratio_mean
     
     ########### compute residuals for covariances, means, weights
-    d_logx_w, d_x_mean, d_xx_cov = zeros(N_modes), zeros(N_modes, N_x), zeros(N_modes, N_x, N_x)
+    d_logx_w, log_ratio_x_mean, log_ratio_xx_mean = zeros(N_modes), zeros(N_modes, N_x), zeros(N_modes, N_x, N_x)
 
     for im = 1:N_modes 
-        # E[(x-m)(logρ+Phi - E(logρ+Phi))]
-        d_x_mean[im,:] = - log_ratio_demeaned[im, :]' * (x_p[im,:,:] .- x_mean[im,:]') / N_ens   
+        # E[x(logρ+Phi(m+Lx) - E(logρ+Phi))]
+        log_ratio_x_mean[im,:] = log_ratio_demeaned[im, :]' * x_p_normal[im,:,:] / N_ens   
         
-        # E[(x-m)(x-m)'(logρ+Phi - E(logρ+Phi))] 
-        d_xx_cov[im,:,:] = -(x_p[im,:,:]' .- x_mean[im,:]) * ((x_p[im,:,:] .- x_mean[im,:]') .* log_ratio_demeaned[im,:]) / N_ens
+        # E[xx'(logρ+Phi(m+Lx) - E(logρ+Phi))] 
+        log_ratio_xx_mean[im,:,:] = x_p_normal[im,:,:]' * (x_p_normal[im,:,:] .* log_ratio_demeaned[im,:]) / N_ens
         
         d_logx_w[im] = -log_ratio_mean[im]
 
@@ -146,7 +140,7 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max
     
     matrix_norm = []
     for im = 1 : N_modes
-        push!(matrix_norm, opnorm( inv_sqrt_xx_cov[im]*d_xx_cov[im,:,:]*inv_sqrt_xx_cov[im]', 2))
+        push!(matrix_norm, opnorm(log_ratio_xx_mean[im,:,:], 2))
     end
     # set an upper bound dt_max, with cos annealing
     dt = min(dt_max,  (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)) / (maximum(matrix_norm))) # keep the matrix postive definite, avoid too large cov update.
@@ -159,12 +153,11 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max
     if update_covariance
         
         for im =1:N_modes
-            if discretize_inv_covariance
-                xx_cov_n[im,:,:] = xx_cov[im,:,:]*inv(I-dt*inv_sqrt_xx_cov[im]'*inv_sqrt_xx_cov[im]*d_xx_cov[im,:,:])
-            else
-                xx_cov_n[im,:,:] += dt*d_xx_cov[im,:,:]
-            end
-            xx_cov_n[im, :, :] = Hermitian(xx_cov_n[im, :, :])
+            
+            sqrt_xx_cov_n = sqrt_xx_cov[im] * exp(-dt*0.5*log_ratio_xx_mean[im,:,:])
+            xx_cov_n[im,:,:] = sqrt_xx_cov_n * sqrt_xx_cov_n'
+            x_mean_n[im,:] += -dt * sqrt_xx_cov_n * log_ratio_x_mean[im,:]
+
             if diagonal_covariance
                 xx_cov_n[im, :, :] = diagm(diag(xx_cov_n[im, :, :]))
             end
@@ -174,8 +167,7 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max
                 @assert(isposdef(xx_cov_n[im, :, :]))
             end
         end
-    end
-    x_mean_n += dt * d_x_mean 
+    end 
     logx_w_n += dt * d_logx_w
 
     # Normalization
@@ -200,8 +192,7 @@ end
 """ func_Phi: the potential function, i.e the posterior is proportional to exp( - func_Phi )"""
 ##########
 function Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov;
-        diagonal_covariance::Bool = false, discretize_inv_covariance::Bool = true, gaussian_mixture_sample::Bool = false,
-        N_iter = 100, dt = 5.0e-1, N_ens = -1, w_min = 1.0e-8)
+        diagonal_covariance::Bool = false, N_iter = 100, dt = 5.0e-1, N_ens = -1, w_min = 1.0e-8)
 
     _, N_x = size(x0_mean) 
     if N_ens == -1 
@@ -212,8 +203,6 @@ function Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov;
         x0_w, x0_mean, xx0_cov;
         update_covariance = true,
         diagonal_covariance = diagonal_covariance,
-        discretize_inv_covariance = discretize_inv_covariance,
-        gaussian_mixture_sample = gaussian_mixture_sample,
         sqrt_matrix_type = "Cholesky",
         N_ens = N_ens,
         w_min = w_min)
