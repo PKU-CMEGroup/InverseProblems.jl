@@ -42,7 +42,7 @@ mutable struct GMNVIObj{FT<:AbstractFloat, IT<:Int}
      random_sampling,  mean_point,  unscented_transform"
     quadrature_type::String
     "expectation of Gaussian mixture and its derivatives"
-    c_weight_BIP::FT
+    c_weight::FT
     c_weights::Array{FT, 2}
     mean_weights::Array{FT, 1}
     "weight clipping"
@@ -65,7 +65,7 @@ function GMNVIObj(# initial condition  #初始化这个struct类
                 N_ens_GM::IT = -1,
                 Hessian_correct_GM::Bool = true,
                 quadrature_type = "mean_point",
-                c_weight_BIP::FT = sqrt(3.0),
+                c_weight::FT = sqrt(3.0),
                 N_ens::IT = -1,
                 w_min::FT = 1.0e-15) where {FT<:AbstractFloat, IT<:Int}
 
@@ -79,9 +79,9 @@ function GMNVIObj(# initial condition  #初始化这个struct类
     push!(xx_cov, xx0_cov)      # insert parameters at end of array (in this case just 1st entry)
     
     iter = 0
-    N_ens_GM, c_weights_GM, mean_weights_GM = generate_quadrature_rule(N_x, quadrature_type_GM; c_weight=c_weight_GM)
+    N_ens_GM, c_weights_GM, mean_weights_GM = generate_quadrature_rule(N_x, quadrature_type_GM; c_weight=c_weight_GM, N_ens=N_ens_GM)
     
-    N_ens, c_weights, mean_weights = generate_quadrature_rule(N_x, quadrature_type; c_weight=c_weight_BIP, N_ens=N_ens)
+    N_ens, c_weights, mean_weights = generate_quadrature_rule(N_x, quadrature_type; c_weight=c_weight, N_ens=N_ens)
 
     name = "NGF-VI"
     GMNVIObj(name,
@@ -92,7 +92,7 @@ function GMNVIObj(# initial condition  #初始化这个struct类
             quadrature_type_GM, c_weight_GM, c_weights_GM, mean_weights_GM, N_ens_GM, Hessian_correct_GM,
             ## potential function expectation
             N_ens, quadrature_type, 
-            c_weight_BIP, c_weights, mean_weights, w_min)
+            c_weight, c_weights, mean_weights, w_min)
 end
 
    
@@ -237,14 +237,14 @@ function GMNVI_Run(
     # Initial condition
     x0_w::Array{FT, 1}, x0_mean::Array{FT, 2}, xx0_cov::Array{FT, 3}; 
     update_covariance::Bool = true, 
-    diagonal_covariance::Bool = true,
+    diagonal_covariance::Bool = false,
     sqrt_matrix_type::String = "Cholesky",
     # setup for Gaussian mixture part
     Hessian_correct_GM::Bool = true,
     quadrature_type_GM::String = "mean_point",
     c_weight_GM::FT = sqrt(3.0),
     quadrature_type = "mean_point",
-    c_weight_BIP::FT = sqrt(3.0), #输入α
+    c_weight::FT = sqrt(3.0), #输入α
     N_ens::IT = -1,
     w_min::FT = 1.0e-15) where {FT<:AbstractFloat, IT<:Int}
     
@@ -259,7 +259,7 @@ function GMNVI_Run(
         quadrature_type_GM = quadrature_type_GM,
         c_weight_GM = c_weight_GM,
         quadrature_type = quadrature_type,
-        c_weight_BIP = c_weight_BIP,
+        c_weight = c_weight,
         N_ens = N_ens,
         w_min = w_min) 
 
@@ -278,7 +278,7 @@ end
 
 
 
-function Gaussian_mixture_NGFVI(func_V, w0, μ0, Σ0; diagonal_covariance::Bool = true, N_iter = 100, dt = 1.0e-3)
+function Gaussian_mixture_NGFVI(func_V, w0, μ0, Σ0; diagonal_covariance::Bool = false, N_iter = 100, dt = 1.0e-3)
 
     N_modes, N_θ = size(μ0)
     
