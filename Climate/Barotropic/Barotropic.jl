@@ -487,10 +487,15 @@ function NNGCM.Lat_Lon_Pcolormesh(mesh::Spectral_Spherical_Mesh, grid_dat::Array
     end
     
 end
-###########################################################################################
-function aug_forward(barotropic::Setup_Param{FT, IT, CT}, θ::Array{FT, 1}) where {FT<:AbstractFloat, IT<:Int, CT<:Complex}
-      
-    mesh, obs_raw_data = Barotropic_Main(barotropic, θ; init_type = "spec_vor")
-    y = convert_obs(barotropic.obs_coord, obs_raw_data; antisymmetric=barotropic.antisymmetric)
-    return [y ; θ]
+
+
+
+function barotropic_F(barotropic::Setup_Param{FT, IT, CT}, args, θ::Array{FT, 1}) where {FT<:AbstractFloat, IT<:Int, CT<:Complex}
+  y_obs, r₀, ση, σ₀ = args
+
+  mesh, obs_raw_data = Barotropic_Main(barotropic, θ; init_type = "spec_vor")
+  Gθ = convert_obs(barotropic.obs_coord, obs_raw_data; antisymmetric=barotropic.antisymmetric)
+
+  return [(y_obs  - Gθ)./ση; (r₀ - θ)./σ₀]
+
 end

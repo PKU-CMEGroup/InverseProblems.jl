@@ -4,16 +4,19 @@ using Random
 using Distributions
 using JLD2
 include("Barotropic.jl")
-
+include("../../Inversion/Plot.jl")
+include("../../Inversion/DF_GMVI.jl")
 
 num_fourier, nθ = 42, 64 #85, 128
 Δt, end_time =  1800, 86400
 n_obs_frames = 2
 obs_time, nobs = Int64(end_time/n_obs_frames), 100
-antisymmetric = true
-trunc_N = 12
+antisymmetric = false
+trunc_N = 10
 N_θ = (trunc_N+2)*trunc_N
-N_y = nobs*n_obs_frames + N_θ 
+N_y = nobs*n_obs_frames 
+N_f = N_y + N_θ 
+# already initialized
 barotropic = Setup_Param(num_fourier, nθ, Δt, end_time, n_obs_frames, nobs, antisymmetric, N_y, trunc_N);
 
 
@@ -34,17 +37,14 @@ end
 
 
 
-include("Barotropic.jl")
-include("../../Inversion/Plot.jl")
-include("../../Inversion/KalmanInversion.jl")
+
 # compute posterior distribution by UKI
 N_iter = 20
-update_freq = 1
 N_modes = 3
 θ0_w  = fill(1.0, N_modes)/N_modes
 
 
-
+μ_0 = zeros(Float64, N_θ)  # prior/initial mean 
 θ0_mean, θθ0_cov  = zeros(N_modes, N_θ), zeros(N_modes, N_θ, N_θ)
 Random.seed!(63);
 σ_0 = 10.0
@@ -54,7 +54,7 @@ for i = 1:N_modes
 end
 
 ########################### CHEATING ############
-DEBUG = true
+DEBUG = false
 if DEBUG
     grid_vor_mirror = -barotropic.grid_vor[:, end:-1:1,  :]
     spe_vor_mirror = similar(barotropic.spe_vor_b)
@@ -68,31 +68,33 @@ end
 ###################################################
 
 
-μ_0 = zeros(Float64, N_θ)  # prior/initial mean 
-Σ_0 = Array(Diagonal(fill(σ_0^2, N_θ)))  # prior/initial covariance
 
 
 
 y_noiseless = convert_obs(barotropic.obs_coord, obs_raw_data; antisymmetric=barotropic.antisymmetric)
 
 σ_η = 1.0e-6
-N_y = barotropic.nobs * barotropic.n_obs_frames
 Random.seed!(123);
-y = y_noiseless + 0.0*rand(Normal(0, σ_η), N_y)
+y_obs = y_noiseless + 0.0*rand(Normal(0, σ_η), N_y)
 Σ_η = Array(Diagonal(fill(σ_η^2, N_y)))
-aug_y = [y; μ_0]
-aug_Σ_η = [Σ_η zeros(Float64, N_y, N_θ); zeros(Float64, N_θ, N_y) Σ_0]  
 
 
 
+Δt = 0.5
+T = N_iter * Δt
+func_F(x) = barotropic_F(barotropic, (y_obs, μ_0, σ_η, σ_0), x)
+
+@time df_gmviobj = DF_GMVI_Run(func_F, T, N_iter, θ0_w, θ0_mean, θθ0_cov;
+                               sqrt_matrix_type = "Cholesky",
+                               # setup for Gaussian mixture part
+                               quadrature_type_GM = "mean_point",
+                               N_f = N_f,
+                               quadrature_type = "unscented_transform",
+                               c_weight_BIP = 1.0e-3,
+                               w_min=1e-8)
+@save "df_gmviobj.jld2" df_gmviobj
 
 
-γ = 1.0
-Δt = γ/(1+γ)
-@time ukiobj = GMUKI_Run(barotropic, aug_forward, θ0_w, θ0_mean, θθ0_cov, aug_y, aug_Σ_η, γ, update_freq, N_iter; unscented_transform="modified-2n+1")
-@save "ukiobj.jld2" ukiobj
-
-# @load "ukiobj.jld2" ukiobj
 
 
 
@@ -122,21 +124,21 @@ ax_vor[1].set_title("Truth")
 spe_vor, grid_vor = copy(barotropic.spe_vor), copy(barotropic.grid_vor)
 
 
-Barotropic_ω0!(mesh, "spec_vor", ukiobj.θ_mean[N_iter][1,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
+Barotropic_ω0!(mesh, "spec_vor", df_gmviobj.x_mean[N_iter][1,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
 plot_field(mesh, grid_vor, 1,  color_lim, ax_vor[2]) 
 ax_vor[2].set_title("Mode 1")
 
-Barotropic_ω0!(mesh, "spec_vor", ukiobj.θ_mean[N_iter][2,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
+Barotropic_ω0!(mesh, "spec_vor", df_gmviobj.x_mean[N_iter][2,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
 plot_field(mesh, grid_vor, 1,  color_lim, ax_vor[3]) 
 ax_vor[3].set_title("Mode 2")
 
-Barotropic_ω0!(mesh, "spec_vor", ukiobj.θ_mean[N_iter][3,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
+Barotropic_ω0!(mesh, "spec_vor", df_gmviobj.x_mean[N_iter][3,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
 plot_field(mesh, grid_vor, 1,  color_lim, ax_vor[4]) 
 ax_vor[4].set_title("Mode 3")
 
 
 fig_vor.tight_layout()
-fig_vor.savefig("Barotropic-2D-vor-LR.pdf")
+fig_vor.savefig("Barotropic-2D-vor.pdf")
 
 
 
@@ -157,10 +159,10 @@ for m = 1:N_modes
         end
         
         
-        Barotropic_ω0!(mesh, "spec_vor", ukiobj.θ_mean[i][m,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
+        Barotropic_ω0!(mesh, "spec_vor", df_gmviobj.x_mean[i][m,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
         errors[1, i, m] = norm(grid_vor_truth - grid_vor)/norm(grid_vor_truth)
-        errors[2, i, m] = 0.5*(ukiobj.y_pred[i][m,:] - ukiobj.y)'*(ukiobj.Σ_η\(ukiobj.y_pred[i][m,:] - ukiobj.y))
-        errors[3, i, m] = norm(ukiobj.θθ_cov[i][m,:,:])
+        errors[2, i, m] = 0.5*(df_gmviobj.y_pred[i][m,:] - df_gmviobj.y)'*(df_gmviobj.Σ_η\(df_gmviobj.y_pred[i][m,:] - df_gmviobj.y))
+        errors[3, i, m] = norm(df_gmviobj.θθ_cov[i][m,:,:])
     end
 end
 
@@ -188,7 +190,7 @@ ax3.set_ylabel("Frobenius norm of covariance")
 ax3.legend()
 
 
-θ_w = exp.(hcat(ukiobj.logθ_w...))
+θ_w = exp.(hcat(df_gmviobj.logθ_w...))
 for m = 1: N_modes
     ax4.plot(ites, θ_w[m, 1:N_iter], marker=linestyles[m], color = "C"*string(m), fillstyle="none", markevery=markevery, label= "mode "*string(m))
 end
@@ -206,19 +208,19 @@ n_ind = 16
 θ_ind = Array(1:n_ind)
 ax.scatter(θ_ind, θ_ref[θ_ind], s = 100, marker="x", color="black", label="Truth")
 for m = 1:N_modes
-    ax.scatter(θ_ind, ukiobj.θ_mean[N_iter][m,θ_ind], s = 50, marker="o", color="C"*string(m), facecolors="none", label="Mode "*string(m))
+    ax.scatter(θ_ind, df_gmviobj.x_mean[N_iter][m,θ_ind], s = 50, marker="o", color="C"*string(m), facecolors="none", label="Mode "*string(m))
 end
 
 Nx = 1000
 for i in θ_ind
-    θ_min = minimum(ukiobj.θ_mean[N_iter][:,i] .- 3sqrt.(ukiobj.θθ_cov[N_iter][:,i,i]))
-    θ_max = maximum(ukiobj.θ_mean[N_iter][:,i] .+ 3sqrt.(ukiobj.θθ_cov[N_iter][:,i,i]))
+    θ_min = minimum(df_gmviobj.x_mean[N_iter][:,i] .- 3sqrt.(df_gmviobj.θθ_cov[N_iter][:,i,i]))
+    θ_max = maximum(df_gmviobj.x_mean[N_iter][:,i] .+ 3sqrt.(df_gmviobj.θθ_cov[N_iter][:,i,i]))
         
     xxs = zeros(N_modes, Nx)  
     zzs = zeros(N_modes, Nx)  
     for m =1:N_modes
-        xxs[m, :], zzs[m, :] = Gaussian_1d(ukiobj.θ_mean[N_iter][m,i], ukiobj.θθ_cov[N_iter][m,i,i], Nx, θ_min, θ_max)
-        zzs[m, :] *= exp(ukiobj.logθ_w[N_iter][m]) * 3
+        xxs[m, :], zzs[m, :] = Gaussian_1d(df_gmviobj.x_mean[N_iter][m,i], df_gmviobj.θθ_cov[N_iter][m,i,i], Nx, θ_min, θ_max)
+        zzs[m, :] *= exp(df_gmviobj.logθ_w[N_iter][m]) * 3
     end
     label = nothing
     if i == 1
