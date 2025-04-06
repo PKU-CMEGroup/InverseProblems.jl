@@ -8,22 +8,43 @@ include("../../Inversion/Plot.jl")
 include("../../Inversion/DF_GMVI.jl")
 
 num_fourier, nθ = 42, 64 #85, 128
+nλ = 2nθ
 Δt, end_time =  1800, 86400
 n_obs_frames = 2
-obs_time, nobs = Int64(end_time/n_obs_frames), 100
+obs_time, nobs = Int64(end_time/n_obs_frames), 50
 antisymmetric = false
-trunc_N = 10
+trunc_N = 8
 N_θ = (trunc_N+2)*trunc_N
 N_y = nobs*n_obs_frames 
 N_f = N_y + N_θ 
-# already initialized
-barotropic = Setup_Param(num_fourier, nθ, Δt, end_time, n_obs_frames, nobs, antisymmetric, N_y, trunc_N);
 
+
+# Initialization
+spe_mesh, grid_u_b, grid_v_b, grid_vor_b, spe_vor_b, grid_vor_pert, grid_u, grid_v, grid_vor, spe_vor, init_data = 
+Barotropic_Init(num_fourier, nθ; trunc_N = trunc_N, radius = 6371.2e3, m = 2.0, θ0 = 45.0 * pi / 180,  θw = 15.0 * pi / 180.0, A = 8.0e-5, symmetric = false)
+   
+    
+Lat_Lon_Pcolormesh(spe_mesh, grid_u_b,  1; save_file_name = "Figs/Barotropic_u_backgroud.pdf", cmap = "viridis")
+Lat_Lon_Pcolormesh(spe_mesh, grid_vor_b,  1; save_file_name = "Figs/Barotropic_vor_backgroud.pdf", cmap = "viridis")
+Lat_Lon_Pcolormesh(spe_mesh, grid_vor_pert, 1; save_file_name = "Figs/Barotropic_vor_pert0.pdf", cmap = "viridis")
+Lat_Lon_Pcolormesh(spe_mesh, grid_vor, 1; save_file_name = "Figs/Barotropic_vor0.pdf", cmap = "viridis")
+Lat_Lon_Pcolormesh(spe_mesh, grid_u, 1; save_file_name = "Figs/Barotropic_vel_u0.pdf", cmap = "viridis")
+    
+
+obs_coord = zeros(Int64, nobs, 2)
+Random.seed!(42)
+obs_coord[:,1], obs_coord[:, 2] = rand(1:nλ-1, nobs), rand(Int64(nθ/2)+1:nθ-1, nobs)
+# obs_coord[:,1], obs_coord[:, 2] = rand(1:nλ-1, nobs), rand(1:nθ-1, nobs)
+
+
+
+barotropic = Setup_Param(num_fourier, nθ, Δt, end_time, n_obs_frames, obs_coord, antisymmetric, N_y, trunc_N, spe_mesh,
+                         grid_u_b, grid_v_b, grid_vor_b, spe_vor_b,      # background velocity/vorticity profiles
+                         grid_u, grid_v, grid_vor, spe_vor, init_data);
 
 
 # Generate reference observation
-# mesh, obs_raw_data = Barotropic_Main(barotropic, nothing; init_type = "truth");
-mesh, obs_raw_data = Barotropic_Main(barotropic, barotropic.init_data; init_type = "spec_vor");
+spe_mesh, obs_raw_data = Barotropic_Main(barotropic, barotropic.init_data);
 
 
 # Plot observation data
@@ -31,11 +52,11 @@ obs_coord = barotropic.obs_coord
 n_obs_frames = barotropic.n_obs_frames
 antisymmetric = barotropic.antisymmetric
 for i_obs = 1:n_obs_frames
-    Lat_Lon_Pcolormesh(mesh, obs_raw_data["vel_u"][i_obs], 1, obs_coord; save_file_name =   "Figs/Barotropic_u-"*string(i_obs)*".pdf", cmap = "viridis", antisymmetric=antisymmetric)
-    Lat_Lon_Pcolormesh(mesh, obs_raw_data["vor"][i_obs], 1, obs_coord; save_file_name =   "Figs/Barotropic_vor-"*string(i_obs)*".pdf", cmap = "viridis", antisymmetric=antisymmetric)
+    Lat_Lon_Pcolormesh(spe_mesh, obs_raw_data["vel_u"][i_obs], 1, obs_coord; save_file_name =   "Figs/Barotropic_u-"*string(i_obs)*".pdf", cmap = "viridis", antisymmetric=antisymmetric)
+    Lat_Lon_Pcolormesh(spe_mesh, obs_raw_data["vor"][i_obs], 1, obs_coord; save_file_name =   "Figs/Barotropic_vor-"*string(i_obs)*".pdf", cmap = "viridis", antisymmetric=antisymmetric)
 end     
 
-
+exit()
 
 
 # compute posterior distribution by UKI
@@ -58,8 +79,8 @@ DEBUG = false
 if DEBUG
     grid_vor_mirror = -barotropic.grid_vor[:, end:-1:1,  :]
     spe_vor_mirror = similar(barotropic.spe_vor_b)
-    Trans_Grid_To_Spherical!(mesh, grid_vor_mirror, spe_vor_mirror)
-    mesh, obs_raw_data_mirror = Barotropic_Main(barotropic, grid_vor_mirror; init_type = "grid_vor");
+    Trans_Grid_To_Spherical!(spe_mesh, grid_vor_mirror, spe_vor_mirror)
+    spe_mesh, obs_raw_data_mirror = Barotropic_Main(barotropic, grid_vor_mirror; init_type = "grid_vor");
     init_data_mirror = spe_to_param(spe_vor_mirror-barotropic.spe_vor_b, barotropic.trunc_N; radius=barotropic.radius)
 
     θ0_mean[1, :]    .= barotropic.init_data
@@ -98,18 +119,7 @@ func_F(x) = barotropic_F(barotropic, (y_obs, μ_0, σ_η, σ_0), x)
 
 
 
-function plot_field(mesh::Spectral_Spherical_Mesh, grid_dat::Array{Float64,3}, level::Int64, clim, ax; cmap="viridis")
-    
-    λc, θc = mesh.λc, mesh.θc
-    nλ, nθ = length(λc), length(θc)
-    λc_deg, θc_deg = λc*180/pi, θc*180/pi
-    
-    X,Y = repeat(λc_deg, 1, nθ), repeat(θc_deg, 1, nλ)'
-    
-    
-    return ax.pcolormesh(X, Y, grid_dat[:,:,level], shading= "gouraud", clim=clim, cmap=cmap)
-    
-end
+
 
 
 N_ens = 2N_θ + 1
@@ -118,22 +128,22 @@ fig_vor, ax_vor = PyPlot.subplots(ncols = 4, sharex=true, sharey=true, figsize=(
 for ax in ax_vor ;  ax.set_xticks([]) ; ax.set_yticks([]) ; end
 color_lim = (minimum(barotropic.grid_vor), maximum(barotropic.grid_vor))
 
-plot_field(mesh, barotropic.grid_vor, 1, color_lim, ax_vor[1]) 
+plot_field(spe_mesh, barotropic.grid_vor, 1, color_lim, ax_vor[1]) 
 ax_vor[1].set_title("Truth")
 
 spe_vor, grid_vor = copy(barotropic.spe_vor), copy(barotropic.grid_vor)
 
 
-Barotropic_ω0!(mesh, "spec_vor", df_gmviobj.x_mean[N_iter][1,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
-plot_field(mesh, grid_vor, 1,  color_lim, ax_vor[2]) 
+Barotropic_ω0!(spe_mesh, "spec_vor", df_gmviobj.x_mean[N_iter][1,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
+plot_field(spe_mesh, grid_vor, 1,  color_lim, ax_vor[2]) 
 ax_vor[2].set_title("Mode 1")
 
-Barotropic_ω0!(mesh, "spec_vor", df_gmviobj.x_mean[N_iter][2,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
-plot_field(mesh, grid_vor, 1,  color_lim, ax_vor[3]) 
+Barotropic_ω0!(spe_mesh, "spec_vor", df_gmviobj.x_mean[N_iter][2,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
+plot_field(spe_mesh, grid_vor, 1,  color_lim, ax_vor[3]) 
 ax_vor[3].set_title("Mode 2")
 
-Barotropic_ω0!(mesh, "spec_vor", df_gmviobj.x_mean[N_iter][3,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
-plot_field(mesh, grid_vor, 1,  color_lim, ax_vor[4]) 
+Barotropic_ω0!(spe_mesh, "spec_vor", df_gmviobj.x_mean[N_iter][3,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
+plot_field(spe_mesh, grid_vor, 1,  color_lim, ax_vor[4]) 
 ax_vor[4].set_title("Mode 3")
 
 
@@ -159,7 +169,7 @@ for m = 1:N_modes
         end
         
         
-        Barotropic_ω0!(mesh, "spec_vor", df_gmviobj.x_mean[i][m,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
+        Barotropic_ω0!(spe_mesh, "spec_vor", df_gmviobj.x_mean[i][m,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
         errors[1, i, m] = norm(grid_vor_truth - grid_vor)/norm(grid_vor_truth)
         errors[2, i, m] = 0.5*(df_gmviobj.y_pred[i][m,:] - df_gmviobj.y)'*(df_gmviobj.Σ_η\(df_gmviobj.y_pred[i][m,:] - df_gmviobj.y))
         errors[3, i, m] = norm(df_gmviobj.θθ_cov[i][m,:,:])
