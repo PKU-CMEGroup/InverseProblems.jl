@@ -171,7 +171,7 @@ for m = 1:N_modes
         
         Barotropic_ω0!(spe_mesh, "spec_vor", df_gmviobj.x_mean[i][m,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
         errors[1, i, m] = norm(grid_vor_truth - grid_vor)/norm(grid_vor_truth)
-        errors[2, i, m] = 0.5*(df_gmviobj.y_pred[i][m,:] - df_gmviobj.y)'*(df_gmviobj.Σ_η\(df_gmviobj.y_pred[i][m,:] - df_gmviobj.y))
+        errors[2, i, m] = df_gmviobj.Phi_r_pred[i][m]
         errors[3, i, m] = norm(df_gmviobj.θθ_cov[i][m,:,:])
     end
 end
@@ -214,7 +214,7 @@ fig.savefig("Barotropic-2D-convergence.pdf")
 fig, ax = PyPlot.subplots(ncols=1, figsize=(16,5))
 θ_ref = barotropic.init_data
 
-n_ind = 16
+n_ind = N_θ
 θ_ind = Array(1:n_ind)
 ax.scatter(θ_ind, θ_ref[θ_ind], s = 100, marker="x", color="black", label="Truth")
 for m = 1:N_modes
