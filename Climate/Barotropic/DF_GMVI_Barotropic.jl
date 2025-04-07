@@ -11,7 +11,7 @@ num_fourier, nθ = 42, 64 #85, 128
 nλ = 2nθ
 Δt, end_time =  1800, 86400
 n_obs_frames = 2
-obs_time, nobs = Int64(end_time/n_obs_frames), 50
+obs_time, nobs = Int64(end_time/n_obs_frames), 100
 antisymmetric = false
 trunc_N = 8
 N_θ = (trunc_N+2)*trunc_N
@@ -33,8 +33,8 @@ Lat_Lon_Pcolormesh(spe_mesh, grid_u, 1; save_file_name = "Figs/Barotropic_vel_u0
 
 obs_coord = zeros(Int64, nobs, 2)
 Random.seed!(42)
-obs_coord[:,1], obs_coord[:, 2] = rand(1:nλ-1, nobs), rand(Int64(nθ/2)+1:nθ-1, nobs)
-# obs_coord[:,1], obs_coord[:, 2] = rand(1:nλ-1, nobs), rand(1:nθ-1, nobs)
+# obs_coord[:,1], obs_coord[:, 2] = rand(1:nλ-1, nobs), rand(Int64(nθ/2)+1:nθ-1, nobs)
+obs_coord[:,1], obs_coord[:, 2] = rand(1:nλ-1, nobs), rand(1:nθ-1, nobs)
 
 
 
@@ -56,7 +56,7 @@ for i_obs = 1:n_obs_frames
     Lat_Lon_Pcolormesh(spe_mesh, obs_raw_data["vor"][i_obs], 1, obs_coord; save_file_name =   "Figs/Barotropic_vor-"*string(i_obs)*".pdf", cmap = "viridis", antisymmetric=antisymmetric)
 end     
 
-exit()
+# exit()
 
 
 # compute posterior distribution by UKI
@@ -116,7 +116,7 @@ func_F(x) = barotropic_F(barotropic, (y_obs, μ_0, σ_η, σ_0), x)
 @save "df_gmviobj.jld2" df_gmviobj
 
 
-
+# df_gmviobj = load("df_gmviobj.jld2")["df_gmviobj"]
 
 
 
@@ -162,17 +162,14 @@ spe_vor, grid_vor = copy(barotropic.spe_vor), copy(barotropic.grid_vor)
 
 for m = 1:N_modes
     for i = 1:N_iter
-        if m == N_modes
-            grid_vor_truth = barotropic.grid_vor
-        else
-            grid_vor_truth = barotropic.grid_vor[:, end:-1:1]
-        end
+        
+        grid_vor_truth = barotropic.grid_vor
         
         
         Barotropic_ω0!(spe_mesh, "spec_vor", df_gmviobj.x_mean[i][m,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
         errors[1, i, m] = norm(grid_vor_truth - grid_vor)/norm(grid_vor_truth)
         errors[2, i, m] = df_gmviobj.Phi_r_pred[i][m]
-        errors[3, i, m] = norm(df_gmviobj.θθ_cov[i][m,:,:])
+        errors[3, i, m] = norm(df_gmviobj.xx_cov[i][m,:,:])
     end
 end
 
@@ -200,9 +197,9 @@ ax3.set_ylabel("Frobenius norm of covariance")
 ax3.legend()
 
 
-θ_w = exp.(hcat(df_gmviobj.logθ_w...))
+x_w = exp.(hcat(df_gmviobj.logx_w...))
 for m = 1: N_modes
-    ax4.plot(ites, θ_w[m, 1:N_iter], marker=linestyles[m], color = "C"*string(m), fillstyle="none", markevery=markevery, label= "mode "*string(m))
+    ax4.plot(ites, x_w[m, 1:N_iter], marker=linestyles[m], color = "C"*string(m), fillstyle="none", markevery=markevery, label= "mode "*string(m))
 end
 ax4.set_xlabel("Iterations")
 ax4.set_ylabel("Weights")
@@ -223,14 +220,14 @@ end
 
 Nx = 1000
 for i in θ_ind
-    θ_min = minimum(df_gmviobj.x_mean[N_iter][:,i] .- 3sqrt.(df_gmviobj.θθ_cov[N_iter][:,i,i]))
-    θ_max = maximum(df_gmviobj.x_mean[N_iter][:,i] .+ 3sqrt.(df_gmviobj.θθ_cov[N_iter][:,i,i]))
+    θ_min = minimum(df_gmviobj.x_mean[N_iter][:,i] .- 3sqrt.(df_gmviobj.xx_cov[N_iter][:,i,i]))
+    θ_max = maximum(df_gmviobj.x_mean[N_iter][:,i] .+ 3sqrt.(df_gmviobj.xx_cov[N_iter][:,i,i]))
         
     xxs = zeros(N_modes, Nx)  
     zzs = zeros(N_modes, Nx)  
     for m =1:N_modes
-        xxs[m, :], zzs[m, :] = Gaussian_1d(df_gmviobj.x_mean[N_iter][m,i], df_gmviobj.θθ_cov[N_iter][m,i,i], Nx, θ_min, θ_max)
-        zzs[m, :] *= exp(df_gmviobj.logθ_w[N_iter][m]) * 3
+        xxs[m, :], zzs[m, :] = Gaussian_1d(df_gmviobj.x_mean[N_iter][m,i], df_gmviobj.xx_cov[N_iter][m,i,i], Nx, θ_min, θ_max)
+        zzs[m, :] *= exp(df_gmviobj.logx_w[N_iter][m]) * 3
     end
     label = nothing
     if i == 1

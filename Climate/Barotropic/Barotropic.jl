@@ -483,7 +483,7 @@ end
 function barotropic_F(barotropic::Setup_Param{FT, IT, CT}, args, θ::Array{FT, 1}) where {FT<:AbstractFloat, IT<:Int, CT<:Complex}
   y_obs, r₀, ση, σ₀ = args
 
-  mesh, obs_raw_data = Barotropic_Main(barotropic, θ; init_type = "spec_vor")
+  mesh, obs_raw_data = Barotropic_Main(barotropic, θ)
   Gθ = convert_obs(barotropic.obs_coord, obs_raw_data; antisymmetric=barotropic.antisymmetric)
 
   return [(y_obs  - Gθ)./ση; (r₀ - θ)./σ₀]
