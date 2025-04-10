@@ -43,6 +43,6 @@ y = darcy.y_obs
 N_iter_MCMC , n_burn_in= 2*10^8, 5*10^7
 
 
-us = PCN_Run(arg -> logρ_likelihood(arg, darcy), μ0, Σ0, 0.008, N_iter_MCMC)
+us = PCN_Run(arg -> logρ_likelihood(arg, darcy), μ0, Σ0, 0.02, N_iter_MCMC)
 
 npzwrite("us.npy", us)
