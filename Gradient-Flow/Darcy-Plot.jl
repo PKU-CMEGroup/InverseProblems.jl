@@ -43,7 +43,6 @@ ax[1].invert_yaxis()
 ax[2].invert_yaxis()
 ax[3].invert_yaxis()
 fig.subplots_adjust(bottom=0.15,top=0.95,left=0.08,right=0.98,hspace=0.2)
-fig.savefig("Darcy-1D-error.pdf")
 fig.savefig("Darcy-1D-solution.pdf")
 
 ###################################################################################
@@ -51,6 +50,9 @@ fig.savefig("Darcy-1D-solution.pdf")
 us = npzread("us.npy")
 N_iter_MCMC, N_θ = size(us)
 n_burn_in = div(N_iter_MCMC, 4)
+
+
+
 θ_cov_ind = Array(1:div(N_θ*(N_θ+1), 2))
 mcmc_θiθj_cov = zeros(Float64, N_θ, N_θ)
 mcmc_θ_mean = mean(us[n_burn_in:N_iter_MCMC, :], dims=1)[:]
@@ -74,6 +76,39 @@ ax.set_yticklabels(["0", "4", "8", "12", "16"])
 
 fig.colorbar(im)
 fig.savefig("Darcy-1D-cov.pdf")
+
+
+
+####################################################################################
+#Evaluate MCMC
+accept = 0
+for i = 1:N_iter_MCMC-1
+    if norm(us[i + 1,:] - us[i,:]) > 1e-10
+        global accept += 1
+    end
+end
+@info "The accept rate is ", accept/N_iter_MCMC
+mcmc_θ_mean_temp = mean(us[div(N_iter_MCMC,2):N_iter_MCMC, :], dims=1)[:]
+@info  "Error/Relative error indicators of MCMC: " norm(mcmc_θ_mean_temp - mcmc_θ_mean), norm(mcmc_θ_mean_temp - mcmc_θ_mean)/norm(mcmc_θ_mean)
+
+# compute autocorrelation
+us = us[n_burn_in:N_iter_MCMC, :] .- mcmc_θ_mean'
+max_lag = 500
+autocorrelation = ones(max_lag)
+temp = copy(us)
+for i =0:max_lag-1
+    @info i
+    temp .= 0.0
+    temp[1:end-i, :] .= us[1:end-i, :]
+    temp[1:end-i, :] .*= us[i+1:end, :]
+    autocorrelation[i+1] = 1/(N_iter_MCMC - n_burn_in + 1 - i) * sum(temp)
+    @info autocorrelation[i+1]
+end
+fig, ax = PyPlot.subplots(figsize=(16,8))
+ax.plot(Array(0:max_lag), autocorrelation/autocorrelation[1])
+ax.set_xlabel("Lag")
+ax.set_ylabel("Autocorrelation")
+fig.savefig("Darcy-1D-autocorrelation.pdf")
 
 
 ###################################################################################
@@ -163,6 +198,8 @@ for i = 1:7
     ax[1].semilogy(indt, mean_error[i,:], markers[i], label=labels[i], color=colors[i], markevery=500, fillstyle="none")
     ax[2].semilogy(indt, cov_error[i,:], markers[i], label=labels[i], color=colors[i], markevery=500, fillstyle="none")
 end
+ax[1].grid("on")
+ax[2].grid("on")
 ax[1].set_xlabel("Number of iterations")
 ax[1].set_ylabel("Rel. mean error")
 ax[2].set_xlabel("Number of iterations")
@@ -190,6 +227,7 @@ for i = 1:7
     ax.plot(θ_ind, mean_all[i,:] - 3*std_all[i,:],  "--",    color=colors[i], fillstyle="none")
 end
 
+ax.grid("on")
 
 
 ax.legend(loc = "upper center",bbox_to_anchor=(0.5,1.28),ncol=3)
@@ -199,42 +237,10 @@ fig.subplots_adjust(bottom=0.12,top=0.8,left=0.05,right=0.98,hspace=0.2)
 fig.savefig("Darcy-1D-theta.pdf")
 
 
-# ###################################################################################
-# nrows, ncols = 8, 8
-# fig, ax = PyPlot.subplots(nrows=nrows, ncols=ncols, figsize=(16,16))
-# subsample = 10
-# Nx = Ny = 100
-# for i = 1:nrows
-#     for j = 1:i
-#         ux = us[n_burn_in:subsample:N_iter_MCMC, i]
-#         x_min, x_max = minimum(ux), maximum(ux)
-#         uy = us[n_burn_in:subsample:N_iter_MCMC, j]
-#         y_min, y_max = minimum(uy), maximum(uy)
-#         xx = LinRange(x_min, x_max, Nx)
-#         yy = LinRange(y_min, y_max, Ny)
-#         X,Y = repeat(xx, 1, Ny), repeat(yy, 1, Nx)' 
-#         kernel = kde(hcat(ux, uy))
-#         Z = pdf(kernel, xx, yy)
-#         ax[i,j].contour(X, Y, Z, cmap="viridis")
-#     end
-# end
-# fig.savefig("Darcy-1D-pair.pdf")
 
 
 
 
-
-# ###################################################################################
-# ncols = 8
-# fig, ax = PyPlot.subplots(ncols=ncols, figsize=(16,4))
-# subsample = 10
-# Nx = Ny = 100
-# for i = 1:nrows
-#     ux = us[n_burn_in:subsample:N_iter_MCMC, i]
-#     x_min, x_max = minimum(ux), maximum(ux)
-#     ax[i].hist(ux, bins = 100, density = true, histtype = "step", label="MCMC", color="grey", linewidth=2)
-# end
-# fig.savefig("Darcy-1D-bin.pdf")
 
 
 

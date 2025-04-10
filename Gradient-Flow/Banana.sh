@@ -10,5 +10,6 @@
 
 # number of tasks
 
-
+jupyter nbconvert --to script Banana-density.ipynb 
+mv Banana-density.jl Banana.jl 
 julia  Banana.jl 

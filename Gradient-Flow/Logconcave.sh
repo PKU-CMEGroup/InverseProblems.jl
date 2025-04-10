@@ -4,11 +4,11 @@
 #SBATCH --nodes=1         # number of nodes
 #SBATCH --ntasks=2       # number of processor cores (i.e. tasks)
 #SBATCH --mem=128G
-#SBATCH -J "Gaussian"    # job name
-#SBATCH -o "Gaussian"
+#SBATCH -J "Logconcave"    # job name
+#SBATCH -o "Logconcave"
 
 
 # number of tasks
-
-
-julia  Gaussian.jl 
+jupyter nbconvert --to script Logconcave-density.ipynb 
+mv Logconcave-density.jl Logconcave.jl 
+julia  Logconcave.jl 
