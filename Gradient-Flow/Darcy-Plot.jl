@@ -80,7 +80,7 @@ fig.savefig("Darcy-1D-cov.pdf")
 
 
 ####################################################################################
-#Evaluate MCMC
+# Evaluate MCMC
 accept = 0
 for i = 1:N_iter_MCMC-1
     if norm(us[i + 1,:] - us[i,:]) > 1e-10
@@ -90,26 +90,6 @@ end
 @info "The accept rate is ", accept/N_iter_MCMC
 mcmc_θ_mean_temp = mean(us[div(N_iter_MCMC,2):N_iter_MCMC, :], dims=1)[:]
 @info  "Error/Relative error indicators of MCMC: " norm(mcmc_θ_mean_temp - mcmc_θ_mean), norm(mcmc_θ_mean_temp - mcmc_θ_mean)/norm(mcmc_θ_mean)
-
-# compute autocorrelation
-us = us[n_burn_in:N_iter_MCMC, :] .- mcmc_θ_mean'
-max_lag = 500
-autocorrelation = ones(max_lag)
-temp = copy(us)
-for i =0:max_lag-1
-    @info i
-    temp .= 0.0
-    temp[1:end-i, :] .= us[1:end-i, :]
-    temp[1:end-i, :] .*= us[i+1:end, :]
-    autocorrelation[i+1] = 1/(N_iter_MCMC - n_burn_in + 1 - i) * sum(temp)
-    @info autocorrelation[i+1]
-end
-fig, ax = PyPlot.subplots(figsize=(16,8))
-ax.plot(Array(0:max_lag), autocorrelation/autocorrelation[1])
-ax.set_xlabel("Lag")
-ax.set_ylabel("Autocorrelation")
-fig.savefig("Darcy-1D-autocorrelation.pdf")
-
 
 ###################################################################################
 
@@ -198,6 +178,9 @@ for i = 1:7
     ax[1].semilogy(indt, mean_error[i,:], markers[i], label=labels[i], color=colors[i], markevery=500, fillstyle="none")
     ax[2].semilogy(indt, cov_error[i,:], markers[i], label=labels[i], color=colors[i], markevery=500, fillstyle="none")
 end
+
+y_min, y_max = ax[1].get_ylim(); ax[1].set_ylim(0.9e-2, y_max)
+y_min, y_max = ax[2].get_ylim(); ax[2].set_ylim(0.9e-2, y_max)
 ax[1].grid("on")
 ax[2].grid("on")
 ax[1].set_xlabel("Number of iterations")
