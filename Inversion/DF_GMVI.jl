@@ -163,7 +163,7 @@ function update_ensemble!(gmgd::DF_GMVIObj{FT, IT}, func::Function, dt_max::FT) 
 
     ###########  Entropy term
     c_weights_GM, mean_weights_GM, N_ens_GM = gmgd.c_weights_GM, gmgd.mean_weights_GM, gmgd.N_ens_GM
-    if  N_ens_GM !=  N_ens  # When different quadratures are applied, generating new sigma points
+    if  (gmgd.quadrature_type_GM != gmgd.quadrature_type) || (N_ens_GM !=  N_ens)  # When different quadratures are applied, generating new sigma points
         x_p = zeros(N_modes, N_ens_GM, N_x)
         for im = 1:N_modes
             x_p[im,:,:] = construct_ensemble(x_mean[im,:], sqrt_xx_cov[im]; c_weights = gmgd.c_weights_GM, N_ens = N_ens_GM) 
