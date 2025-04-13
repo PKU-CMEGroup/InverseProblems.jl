@@ -141,7 +141,7 @@ function update_ensemble!(gmgd::DF_GMVIObj{FT, IT}, func::Function, dt_max::FT) 
     ############ Generate sigma points
     x_p = zeros(N_modes, N_ens, N_x)
     for im = 1:N_modes
-        x_p[im,:,:] = construct_ensemble(x_mean[im,:], sqrt_xx_cov[im]; c_weights = gmgd.c_weights)
+        x_p[im,:,:] = construct_ensemble(x_mean[im,:], sqrt_xx_cov[im]; c_weights = gmgd.c_weights, N_ens = N_ens)
     end
 
 
@@ -163,7 +163,13 @@ function update_ensemble!(gmgd::DF_GMVIObj{FT, IT}, func::Function, dt_max::FT) 
 
     ###########  Entropy term
     c_weights_GM, mean_weights_GM, N_ens_GM = gmgd.c_weights_GM, gmgd.mean_weights_GM, gmgd.N_ens_GM
-    logρ_mean, ∇logρ_mean, ∇²logρ_mean  = compute_logρ_gm_expectation(exp.(logx_w), x_mean, sqrt_xx_cov, inv_sqrt_xx_cov, c_weights_GM, mean_weights_GM, N_ens_GM, gmgd.Hessian_correct_GM)
+    if  N_ens_GM !=  N_ens  # When different quadratures are applied, generating new sigma points
+        x_p = zeros(N_modes, N_ens_GM, N_x)
+        for im = 1:N_modes
+            x_p[im,:,:] = construct_ensemble(x_mean[im,:], sqrt_xx_cov[im]; c_weights = gmgd.c_weights_GM, N_ens = N_ens_GM) 
+        end
+    end
+    logρ_mean, ∇logρ_mean, ∇²logρ_mean  = compute_logρ_gm_expectation(exp.(logx_w), x_mean, sqrt_xx_cov, inv_sqrt_xx_cov, x_p, mean_weights_GM, gmgd.Hessian_correct_GM)
     
     ########## update covariance
     for im = 1:N_modes
@@ -171,6 +177,8 @@ function update_ensemble!(gmgd::DF_GMVIObj{FT, IT}, func::Function, dt_max::FT) 
         # update covariance
         if update_covariance
 
+            # xx_cov_n[im, :, :] =   inv( Hermitian(inv(xx_cov[im, :, :]) + dt*(∇²logρ_mean[im, :, :] + ∇²Φᵣ_mean[im, :, :]) ))
+            
             xx_cov_n[im, :, :] =   inv( Hermitian(inv(xx_cov[im, :, :]) + dt*(∇²logρ_mean[im, :, :] + ∇²Φᵣ_mean[im, :, :]) ))
             
             if !isposdef(xx_cov_n[im, :, :])

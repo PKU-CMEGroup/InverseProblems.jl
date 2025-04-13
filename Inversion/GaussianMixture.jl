@@ -80,20 +80,17 @@ end
 
 # compute expectaion of derivatives of Gaussian mixture density (e.g, ρ, ∇ρ, ∇²ρ) with respect to each mode
 # input : Gaussian mixture weights, means, the inverse of sqrt(covs)
-# input : c_weights_GM, mean_weights_GM, N_ens_GM
+# input : sigma point xs, Float[N_modes, N_ens_GM, N_x]
+# input : mean_weights_GM, weights for computing mean
 # input : Hessian_correct_GM , whether correct ∇²ρ computation
-function compute_logρ_gm_expectation(x_w, x_mean, sqrt_xx_cov, inv_sqrt_xx_cov, c_weights_GM, mean_weights_GM, N_ens_GM, Hessian_correct_GM)
+function compute_logρ_gm_expectation(x_w, x_mean, sqrt_xx_cov, inv_sqrt_xx_cov, xs, mean_weights_GM, Hessian_correct_GM)
     x_w = x_w / sum(x_w)
     N_modes, N_x = size(x_mean)
-    if c_weights_GM !== nothing
-        N_ens_GM =  size(c_weights_GM, 2)
-    end
-    xs = zeros(N_modes, N_ens_GM, N_x)
+    
+    N_ens_GM =  size(xs, 2)
+    
     logρ_mean, ∇logρ_mean, ∇²logρ_mean = zeros(N_modes), zeros(N_modes, N_x), zeros(N_modes, N_x, N_x)
 
-    for im = 1:N_modes
-        xs[im,:,:] = construct_ensemble(x_mean[im, :], sqrt_xx_cov[im]; c_weights = c_weights_GM, N_ens = N_ens_GM)
-    end
     
     logρ, ∇logρ, ∇²logρ = compute_logρ_gm(xs, x_w, x_mean, inv_sqrt_xx_cov, Hessian_correct_GM)
    
