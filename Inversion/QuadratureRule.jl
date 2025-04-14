@@ -153,14 +153,18 @@ function compute_expectation_BIP(x_mean, inv_sqrt_cov, V, c_weight)
     BTA = b * a'
     BTc, ATc = b * c, a * c
     cTc = c' * c
+
+    # Ignore second order effect, mean point approximation
+    # Φᵣ_mean = 1/2*(sum(ATA) + 2*tr(ATA) + 2*sum(ATc) + tr(BTB) + cTc)
     Φᵣ_mean = 1/2*(cTc)
     
-    # Ignore second order effect
+    # Ignore second order effect, mean point approximation
+    # ∇Φᵣ_mean = inv_sqrt_cov'*(sum(BTA,dims=2) + 2*diag(BTA) + BTc)
     ∇Φᵣ_mean = inv_sqrt_cov'*(BTc)
 
-    
+    # Keep SPD part, with mean point approximation
+    # ∇²Φᵣ_mean = inv_sqrt_cov'*( Diagonal(2*dropdims(sum(ATA, dims=2), dims=2) + 4*diag(ATA) + 2*ATc) + BTB)*inv_sqrt_cov
     ∇²Φᵣ_mean = inv_sqrt_cov'*( Diagonal(6*diag(ATA)) + BTB)*inv_sqrt_cov
-    # ∇²Φᵣ_mean = inv_sqrt_cov'*( BTB )*inv_sqrt_cov
           
     return Φᵣ_mean, ∇Φᵣ_mean, ∇²Φᵣ_mean
 end
@@ -180,31 +184,6 @@ function compute_expectation(V, ∇V, ∇²V, mean_weights)
     return Φᵣ_mean, ∇Φᵣ_mean, ∇²Φᵣ_mean
 end
 
-#F₁ = xᵀA₁x + b₁ᵀx₁ + c₁
-#F₂ = xᵀA₂x + b₂ᵀx₂ + c₂
-#Φᵣ = FᵀF/2
 
-function func_F(x, args)
-    A₁,b₁,c₁,A₂,b₂,c₂ = args
-    return [x'*A₁*x + b₁'*x + c₁; 
-            x'*A₂*x + b₂'*x + c₂]
-end
-
-function func_Phi_R(x, args)
-    F = func_F(x, args)
-    Φᵣ = (F' * F)/2.0
-    return Φᵣ
-end
-
-function func_dF(x, args)
-    return func_F(x, args), 
-           ForwardDiff.jacobian(x -> func_F(x, args), x)
-end
-
-function func_dPhi_R(x, args)
-    return func_Phi_R(x, args), 
-           ForwardDiff.gradient(x -> func_Phi_R(x, args), x), 
-           ForwardDiff.hessian(x -> func_Phi_R(x, args), x)
-end
 
 

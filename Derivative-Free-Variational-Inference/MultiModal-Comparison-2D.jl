@@ -8,6 +8,43 @@ include("../Inversion/Plot.jl")
 include("../Inversion/GMBBVI.jl")
 include("./MultiModal.jl")
 
+
+function Gaussian_mixture_NGFVI(func_V, w0, μ0, Σ0; diagonal_covariance::Bool = false,  Hessian_correct_GM::Bool = false, N_ens = -1, N_ens_GM, N_iter = 100, dt = 1.0e-3)
+
+        N_modes, N_θ = size(μ0)
+        
+        if N_ens == -1  N_ens = 2*N_θ+1   end
+    
+        T =  N_iter * dt
+        x0_w = w0
+        x0_mean = μ0
+        xx0_cov = Σ0
+        sqrt_matrix_type = "Cholesky"
+        
+        objs = []
+    
+        gmnviobj = GMNVI_Run(
+        func_V, 
+        T,
+        N_iter,
+        # Initial condition
+        x0_w, x0_mean, xx0_cov;
+        sqrt_matrix_type = sqrt_matrix_type,
+        diagonal_covariance = diagonal_covariance,
+        # setup for Gaussian mixture part
+        quadrature_type_GM = "mean_point",
+        # setup for potential function part
+        quadrature_type = "mean_point",
+        Hessian_correct_GM = Hessian_correct_GM,
+        N_ens = N_ens)
+        
+        push!(objs, gmnviobj)
+    
+    
+        return objs
+end
+
+    
 function visualization_comparison_2d(ax, obj_GMNVI, obj_GMNVI_D, obj_GMWVI, obj_BBVI, ens_MCMC ; Nx = 200, Ny = 200, x_lim=[-3.0, 3.0], y_lim=[-3.0, 3.0],
         func_F = nothing, func_Phi = nothing, bandwidth=nothing, make_label::Bool=false, N_iter=500)
 
