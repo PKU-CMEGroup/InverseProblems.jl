@@ -69,7 +69,7 @@ end
 
 
 
-function Gaussian_mixture_VI(func_dPhi, func_F, w0, μ0, Σ0; N_iter = 100, dt = 1.0e-3, Hessian_correct_GM=true)
+function Gaussian_mixture_VI(func_dPhi, func_F, w0, μ0, Σ0; N_iter = 100, dt = 1.0e-3, c_weight_BIP = 1.0e-3, Hessian_correct_GM=true)
 
     N_modes, N_θ = size(μ0)
     
@@ -115,7 +115,7 @@ function Gaussian_mixture_VI(func_dPhi, func_F, w0, μ0, Σ0; N_iter = 100, dt =
         Hessian_correct_GM = Hessian_correct_GM, 
         N_f = N_f,
         quadrature_type = "unscented_transform",
-        c_weight_BIP = 1.0e-3,
+        c_weight_BIP = c_weight_BIP,
         w_min=1e-8)
         
         push!(objs, gmgdobj_BIP)
