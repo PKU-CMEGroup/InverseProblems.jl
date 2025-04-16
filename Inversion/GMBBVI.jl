@@ -79,6 +79,16 @@ function ensemble_BBVI(x_ens, forward)
     return F
 end
 
+function construct_Gaussian_ensemble(x_mean, sqrt_cov; N_ens = 100)
+
+    N_x = size(x_mean,1)
+    # generate random weights on the fly
+    c_weights = rand(Normal(0, 1), N_x, N_ens)
+
+    xs = ones(N_ens)*x_mean' + (sqrt_cov * c_weights)'       
+
+    return xs
+end
 
 function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max::FT, iter::IT, N_iter::IT) where {FT<:AbstractFloat, IT<:Int} #从某一步到下一步的步骤
     
@@ -95,7 +105,7 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max
     xx_cov  = gmgd.xx_cov[end]
     x_w = exp.(logx_w)
     x_w /= sum(x_w)
-
+    
     # compute square root matrix
     sqrt_xx_cov, inv_sqrt_xx_cov = [], []
     for im = 1:N_modes
@@ -106,11 +116,9 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max
 
     N_ens = gmgd.N_ens
     ############ Generate sigma points
-    x_p_normal = zeros(N_modes, N_ens, N_x)
     x_p = zeros(N_modes, N_ens, N_x)
     for im = 1:N_modes
-        x_p_normal[im,:,:] = construct_ensemble(zeros(N_x), I(N_x); c_weights = nothing, N_ens = N_ens)
-        x_p[im,:,:] = x_p_normal[im,:,:]*sqrt_xx_cov[im]' .+ x_mean[im,:]'
+        x_p[im,:,:] = construct_Gaussian_ensemble(x_mean[im,:], sqrt_xx_cov[im]; N_ens = N_ens)
     end
     
     ########### function evaluation, Φᵣ, N_modes by N_ens
@@ -125,14 +133,14 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max
     log_ratio_demeaned = log_ratio .- log_ratio_mean
     
     ########### compute residuals for covariances, means, weights
-    d_logx_w, log_ratio_x_mean, log_ratio_xx_mean = zeros(N_modes), zeros(N_modes, N_x), zeros(N_modes, N_x, N_x)
+    d_logx_w, d_x_mean, d_xx_cov = zeros(N_modes), zeros(N_modes, N_x), zeros(N_modes, N_x, N_x)
 
     for im = 1:N_modes 
-        # E[x(logρ+Phi(m+Lx) - E(logρ+Phi))]
-        log_ratio_x_mean[im,:] = log_ratio_demeaned[im, :]' * x_p_normal[im,:,:] / N_ens   
-        
-        # E[xx'(logρ+Phi(m+Lx) - E(logρ+Phi))] 
-        log_ratio_xx_mean[im,:,:] = x_p_normal[im,:,:]' * (x_p_normal[im,:,:] .* log_ratio_demeaned[im,:]) / N_ens
+        # E[(x-m)(logρ+Phi - E(logρ+Phi))]
+        d_x_mean[im,:] = - log_ratio[im, :]' * (x_p[im,:,:] .- x_mean[im,:]') / N_ens 
+
+        # E[(x-m)(x-m)'(logρ+Phi - E(logρ+Phi))] 
+        d_xx_cov[im,:,:] = -(x_p[im,:,:]' .- x_mean[im,:]) * ((x_p[im,:,:] .- x_mean[im,:]') .* log_ratio_demeaned[im,:]) / N_ens
         
         d_logx_w[im] = -log_ratio_mean[im]
 
@@ -140,10 +148,10 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max
     
     matrix_norm = []
     for im = 1 : N_modes
-        push!(matrix_norm, opnorm(log_ratio_xx_mean[im,:,:], 2))
+        push!(matrix_norm, opnorm( d_xx_cov[im,:,:]*inv_sqrt_xx_cov[im]'*inv_sqrt_xx_cov[im], 2))
     end
-    # set an upper bound dt_max, with cos annealing
-    dt = min(dt_max,  (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)) / (maximum(matrix_norm))) # keep the matrix postive definite, avoid too large cov update.
+    # set an upper bound dt_max to keep the matrix postive definite
+    dt = min(dt_max,  0.99 / (maximum(matrix_norm))) 
     
     ########### update covariances, means, weights
     x_mean_n = copy(x_mean) 
@@ -154,10 +162,8 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max
         
         for im =1:N_modes
             
-            sqrt_xx_cov_n = sqrt_xx_cov[im] * exp(-dt*0.5*log_ratio_xx_mean[im,:,:])
-            xx_cov_n[im,:,:] = sqrt_xx_cov_n * sqrt_xx_cov_n'
-            x_mean_n[im,:] += -dt * sqrt_xx_cov_n * log_ratio_x_mean[im,:]
-
+            xx_cov_n[im,:,:] += dt * d_xx_cov[im,:,:]
+            xx_cov_n[im,:,:] = Hermitian(xx_cov_n[im,:,:])
             if diagonal_covariance
                 xx_cov_n[im, :, :] = diagm(diag(xx_cov_n[im, :, :]))
             end
@@ -168,6 +174,7 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max
             end
         end
     end 
+    x_mean_n += dt * d_x_mean 
     logx_w_n += dt * d_logx_w
 
     # Normalization

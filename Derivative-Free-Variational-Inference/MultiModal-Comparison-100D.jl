@@ -26,6 +26,7 @@ function visualization_comparison_100d(ax, obj_BBVI= nothing, obj_MCMC = nothing
     color_lim = (minimum(Z_ref), maximum(Z_ref))
     ax[1].pcolormesh(X, Y, Z_ref, cmap="viridis", clim=color_lim)
 
+    markers = ["o", "s", "^", "v", ">", "<", "D", "p", "*"]
 
     if obj_MCMC!=nothing
         error = zeros(length(obj_MCMC),N_iter+1)
@@ -63,9 +64,11 @@ function visualization_comparison_100d(ax, obj_BBVI= nothing, obj_MCMC = nothing
 
                 end
             end
-        end
-        label = ["J="*string(size(ens,2))  for ens in obj_MCMC ]
-        ax[5].semilogy(Array(0:N_iter), error', label=label) 
+
+            ax[5].semilogy(Array(0:N_iter), error[i,:], label= "J="*string(size(ens,2)),
+                marker=markers[i], markevery=div(N_iter,10),markerfacecolor="none") 
+
+        end        
     end
 
 
@@ -90,9 +93,11 @@ function visualization_comparison_100d(ax, obj_BBVI= nothing, obj_MCMC = nothing
                 
                 end
             end
+
+            ax[5].semilogy(Array(0:N_iter), error[i,:], label= "J="*string(obj.N_ens),
+                marker=markers[i], markevery=div(N_iter,10),markerfacecolor="none") 
         end
-        label = ["J="*string(obj.N_ens)  for obj in obj_BBVI ]
-        ax[5].semilogy(Array(0:N_iter), error', label=label) 
+        
     end
 
     
