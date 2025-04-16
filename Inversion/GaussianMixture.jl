@@ -192,9 +192,12 @@ function visualization_1d(ax; Nx=2000, x_lim=[-4.0,4.0], func_F = nothing, func_
         end
         
     end
+    
+    markers = ["o", "s", "^", "v", ">", "<", "D", "p", "*"]
     for i_obj = 1:N_obj
         ax[N_obj+1].semilogy(Array(0:N_iter), error[i_obj, :], 
-            label=(label===nothing ? label : label*" (K="*string(size(objs[i_obj].x_mean[1], 1))*")" ))
+            label=(label===nothing ? label : label*" (K="*string(size(objs[i_obj].x_mean[1], 1))*")" ),
+            marker=markers[i_obj], markevery=div(N_iter,10), markerfacecolor="none")   
     end
     if label!==nothing 
        ax[N_obj+1].legend()
@@ -284,9 +287,12 @@ function visualization_2d(ax; Nx=2000, Ny=2000, x_lim=[-4.0,4.0], y_lim=[-4.0,4.
     if isa(label, String)
         label = fill(label, N_obj)
     end
+    
+    markers = ["o", "s", "^", "v", ">", "<", "D", "p", "*"]
     for i_obj = 1:N_obj
         ax[N_obj+2].semilogy(Array(0:N_iter), error[i_obj, :], 
-                        label=(label===nothing ? label : label[i_obj]*" (K="*string(size(objs[i_obj].x_mean[1], 1))*")" ))   
+                        label=(label===nothing ? label : label[i_obj]*" (K="*string(size(objs[i_obj].x_mean[1], 1))*")" ),
+                        marker=markers[i_obj], markevery=div(N_iter,10), markerfacecolor="none")   
     end
     # Get the current y-axis limits
     ymin, ymax = ax[N_obj+2].get_ylim()
