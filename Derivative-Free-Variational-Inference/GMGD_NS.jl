@@ -16,7 +16,8 @@ ub, vb = 0.0, 2*pi                              # background velocity
 method="Crank-Nicolson"                         # RK4 or Crank-Nicolson
 N_t = 2500;                                     # time step
 T = 0.5;                                        # final time
-obs_ΔNx, obs_ΔNy, obs_ΔNt = 8, 16, 1250         # observation
+# obs_ΔNx, obs_ΔNy, obs_ΔNt = 8, 16, 1250         # observation
+obs_ΔNx, obs_ΔNy, obs_ΔNt = 8, 12, 1250         # observation
 symmetric = true
 σ_0 = sqrt(2)*pi
 N_KL = 128
@@ -38,12 +39,12 @@ s_param = Setup_Param(ν, ub, vb,
 ω0_ref_mirror = -ω0_ref[[1;end:-1:2], :]
 # generate observation data
 y_noiseless = forward_helper(s_param, ω0_ref; symmetric=true, save_file_name="NS", vmin=-5.0, vmax=5.0);
-y_noiseless_mirror = forward_helper(s_param, ω0_ref_mirror; symmetric=true, save_file_name="NS_mirror", vmin=-5.0, vmax=5.0);
+y_noiseless_mirror = forward_helper(s_param, ω0_ref_mirror; symmetric=true, save_file_name="None", vmin=-5.0, vmax=5.0);
 @info "y - y_mirror = ", norm(y_noiseless - y_noiseless_mirror)
 
 # compute posterior distribution by GMKI
 N_iter = 200
-N_modes = 3
+N_modes = 5
 θ0_w  = fill(1.0, N_modes)/N_modes
 
 
@@ -51,17 +52,15 @@ Random.seed!(42)
 θ0_mean, θθ0_cov  = zeros(N_modes, N_θ), zeros(N_modes, N_θ, N_θ)
 for i = 1:N_modes
     θ0_mean[i, :]    .= rand(Normal(0, σ_0), N_θ) 
-    θθ0_cov[i, :, :] .= Array(Diagonal(fill(1.0^2, N_θ)))
+    θθ0_cov[i, :, :] .= Array(Diagonal(fill(σ_0^2, N_θ)))
 end
 μ_0 = zeros(Float64, N_θ)  # prior/initial mean 
-Σ_0 = Array(Diagonal(fill(σ_0^2, N_θ)))  # prior/initial covariance
 
 
-σ_η = 0.1
+σ_η = 0.3
 N_y = length(y_noiseless)
 y = y_noiseless + rand(Normal(0, σ_η), N_y)
 Σ_η = Array(Diagonal(fill(σ_η^2, N_y)))
-
 
 ### Augment the system
 s_param.N_y = N_f = N_y + N_θ
@@ -87,7 +86,7 @@ gmgdobj = DF_GMVI_Run(
         w_min=1e-8)
 @save "gmgdobj-NS.jld2" gmgdobj
 
-
+# gmgdobj = load("gmgdobj-NS.jld2")["gmgdobj"]
 
 
 #################################################################################################################################################
@@ -104,7 +103,7 @@ end
 
 N_ens = 2N_θ + 1
 # visulize the log permeability field
-fig_vor, ax_vor = PyPlot.subplots(ncols = 5, sharex=true, sharey=true, figsize=(16,3))
+fig_vor, ax_vor = PyPlot.subplots(ncols = N_modes+2, sharex=true, sharey=true, figsize=(3*(N_modes+2),3))
 for ax in ax_vor ;  ax.set_xticks([]) ; ax.set_yticks([]) ; end
 color_lim = (minimum(s_param.ω0_ref), maximum(s_param.ω0_ref))
 
@@ -114,18 +113,11 @@ ax_vor[1].set_title("Truth")
 plot_field(mesh, -s_param.ω0_ref[[1;end:-1:2], :], color_lim, ax_vor[2]) 
 ax_vor[2].set_title("Truth (mirrored)")
 
-grid_vor = Random_Field_From_Theta(mesh, gmgdobj.x_mean[N_iter][1,:], s_param.seq_pairs)   
-plot_field(mesh, grid_vor,  color_lim, ax_vor[3]) 
-ax_vor[3].set_title("Mode 1")
-
-grid_vor = Random_Field_From_Theta(mesh, gmgdobj.x_mean[N_iter][2,:], s_param.seq_pairs)   
-plot_field(mesh, grid_vor,  color_lim, ax_vor[4]) 
-ax_vor[4].set_title("Mode 2")
-
-grid_vor = Random_Field_From_Theta(mesh, gmgdobj.x_mean[N_iter][3,:], s_param.seq_pairs)   
-plot_field(mesh, grid_vor,  color_lim, ax_vor[5]) 
-ax_vor[5].set_title("Mode 3")
-
+for i = 1:N_modes
+    grid_vor = Random_Field_From_Theta(mesh, gmgdobj.x_mean[N_iter][i,:], s_param.seq_pairs)   
+    plot_field(mesh, grid_vor,  color_lim, ax_vor[i+2]) 
+    ax_vor[i+2].set_title("Mode "*string(i))
+end
 
 fig_vor.tight_layout()
 fig_vor.savefig("NS-2D-vor.pdf")
@@ -150,12 +142,12 @@ for m = 1:N_modes
         grid_vor = Random_Field_From_Theta(mesh, gmgdobj.x_mean[i][m,:], s_param.seq_pairs)   
 
         errors[1, i, m] = norm(grid_vor_truth - grid_vor)/norm(grid_vor_truth)
-        errors[2, i, m] = gmgdobj.phi_r_pred[i][m]
+        errors[2, i, m] = gmgdobj.Phi_r_pred[i][m]
         errors[3, i, m] = norm(gmgdobj.xx_cov[i][m,:,:])
     end
 end
 
-linestyles = ["o"; "x"; "s"]
+linestyles = ["o"; "x"; "s"; "v"; "p"; "h"; "1"; "2"; "3"; "4"]
 markevery = 5
 for m = 1: N_modes
     ax1.plot(ites, errors[1, :, m], marker=linestyles[m], color = "C"*string(m), fillstyle="none", markevery=markevery, label= "mode "*string(m))

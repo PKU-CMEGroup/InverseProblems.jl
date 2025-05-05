@@ -2,8 +2,10 @@ using NNGCM
 using LinearAlgebra
 using Random
 import PyPlot
+include("../../Inversion/Plot.jl")
 
-function plot_field(spe_mesh::Spectral_Spherical_Mesh, grid_dat::Array{Float64,3}, level::Int64, clim, ax; cmap="viridis")
+
+function plot_field(spe_mesh::Spectral_Spherical_Mesh, grid_dat::Array{Float64,3}, level::Int64, clim, ax; cmap="viridis", obs_coord = nothing)
     
   λc, θc = spe_mesh.λc, spe_mesh.θc
   nλ, nθ = length(λc), length(θc)
@@ -11,11 +13,139 @@ function plot_field(spe_mesh::Spectral_Spherical_Mesh, grid_dat::Array{Float64,3
   
   X,Y = repeat(λc_deg, 1, nθ), repeat(θc_deg, 1, nλ)'
   
+  im =  ax.pcolormesh(X, Y, grid_dat[:,:,level], shading= "gouraud", clim=clim, cmap=cmap)
   
-  return ax.pcolormesh(X, Y, grid_dat[:,:,level], shading= "gouraud", clim=clim, cmap=cmap)
-  
+  if !isnothing(obs_coord) 
+    x_obs, y_obs = λc_deg[obs_coord[:,1]], θc_deg[obs_coord[:,2]]
+    ax.scatter(x_obs, y_obs, color="black" , s = 0.6)
+  end
+
+  return im
+
 end
 
+function plot_results(barotropic, df_gmviobj)
+  N_modes, N_iter = df_gmviobj.N_modes, length(df_gmviobj.x_mean)-1
+  spe_mesh, N_θ = barotropic.mesh, barotropic.N_θ
+  N_ens = 2N_θ + 1
+  # visulize the log permeability field
+  fig_vor, ax_vor = PyPlot.subplots(ncols = N_modes+1, sharex=true, sharey=true, figsize=((N_modes+1)*5,5))
+  ax_vor = ax_vor[:]
+  for ax in ax_vor ;  ax.set_xticks([]) ; ax.set_yticks([]) ; end
+  color_lim = (minimum(barotropic.grid_vor), maximum(barotropic.grid_vor))
+
+  plot_field(spe_mesh, barotropic.grid_vor, 1, color_lim, ax_vor[1]) 
+  ax_vor[1].set_title("Truth")
+
+  spe_vor, grid_vor = copy(barotropic.spe_vor), copy(barotropic.grid_vor)
+
+  for m = 1:N_modes
+      Barotropic_ω0!(spe_mesh, "spec_vor", df_gmviobj.x_mean[N_iter][m,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
+      plot_field(spe_mesh, grid_vor, 1,  color_lim, ax_vor[m+1]) 
+      ax_vor[m+1].set_title("Mode " * string(m))
+  end
+
+
+
+  fig_vor.tight_layout()
+  fig_vor.savefig("Barotropic-2D-vor.pdf")
+
+
+
+
+  fig, (ax1, ax2, ax3, ax4) = PyPlot.subplots(ncols=4, figsize=(20,5))
+  ites = Array(LinRange(0, N_iter-1, N_iter))
+  errors = zeros(Float64, (3, N_iter, N_modes))
+  spe_vor, grid_vor = copy(barotropic.spe_vor), copy(barotropic.grid_vor)
+
+  for m = 1:N_modes
+      for i = 1:N_iter
+          
+          grid_vor_truth = barotropic.grid_vor
+          
+          
+          Barotropic_ω0!(spe_mesh, "spec_vor", df_gmviobj.x_mean[i][m,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
+          errors[1, i, m] = norm(grid_vor_truth - grid_vor)/norm(grid_vor_truth)
+          errors[2, i, m] = df_gmviobj.Phi_r_pred[i][m]
+          errors[3, i, m] = norm(df_gmviobj.xx_cov[i][m,:,:])
+
+          if i == N_iter
+            @info df_gmviobj.Phi_r_pred[i][m]
+          end
+          
+      end
+  end
+
+  # linestyles = ["o"; "x"; "s"]
+  markevery = 5
+  for m = 1: N_modes
+      ax1.plot(ites, errors[1, :, m], marker=m, color = "C"*string(m), fillstyle="none", markevery=markevery, label= "mode "*string(m))
+  end
+  ax1.set_xlabel("Iterations")
+  ax1.set_ylabel("Rel. error of a(x)")
+  ax1.legend()
+
+  for m = 1: N_modes
+      ax2.semilogy(ites, errors[2, :, m], marker=m, color = "C"*string(m), fillstyle="none", markevery=markevery, label= "mode "*string(m))
+  end
+  ax2.set_xlabel("Iterations")
+  ax2.set_ylabel(L"\Phi_R")
+  ax2.legend()
+
+  for m = 1: N_modes
+      ax3.plot(ites, errors[3, :, m], marker=m, color = "C"*string(m), fillstyle="none", markevery=markevery, label= "mode "*string(m))
+  end
+  ax3.set_xlabel("Iterations")
+  ax3.set_ylabel("Frobenius norm of covariance")
+  ax3.legend()
+
+
+  x_w = exp.(hcat(df_gmviobj.logx_w...))
+  for m = 1: N_modes
+      ax4.plot(ites, x_w[m, 1:N_iter], marker=m, color = "C"*string(m), fillstyle="none", markevery=markevery, label= "mode "*string(m))
+  end
+  ax4.set_xlabel("Iterations")
+  ax4.set_ylabel("Weights")
+  ax4.legend()
+  fig.tight_layout()
+  fig.savefig("Barotropic-2D-convergence.pdf")
+
+
+  fig, ax = PyPlot.subplots(ncols=1, figsize=(16,5))
+  θ_ref = barotropic.init_data
+
+  n_ind = N_θ
+  θ_ind = Array(1:n_ind)
+  ax.scatter(θ_ind, θ_ref[θ_ind], s = 100, marker="x", color="black", label="Truth")
+  for m = 1:N_modes
+      ax.scatter(θ_ind, df_gmviobj.x_mean[N_iter][m,θ_ind], s = 50, marker="o", color="C"*string(m), facecolors="none", label="Mode "*string(m))
+  end
+
+  Nx = 1000
+  for i in θ_ind
+      θ_min = minimum(df_gmviobj.x_mean[N_iter][:,i] .- 3sqrt.(df_gmviobj.xx_cov[N_iter][:,i,i]))
+      θ_max = maximum(df_gmviobj.x_mean[N_iter][:,i] .+ 3sqrt.(df_gmviobj.xx_cov[N_iter][:,i,i]))
+          
+      xxs = zeros(N_modes, Nx)  
+      zzs = zeros(N_modes, Nx)  
+      for m =1:N_modes
+          xxs[m, :], zzs[m, :] = Gaussian_1d(df_gmviobj.x_mean[N_iter][m,i], df_gmviobj.xx_cov[N_iter][m,i,i], Nx, θ_min, θ_max)
+          zzs[m, :] *= exp(df_gmviobj.logx_w[N_iter][m]) * 3
+      end
+      label = nothing
+      if i == 1
+          label = "GMVI"
+      end
+      ax.plot(sum(zzs, dims=1)' .+ i, xxs[1,:], linestyle="-", color="C0", fillstyle="none", label=label)
+      ax.plot(fill(i, Nx), xxs[1,:], linestyle=":", color="black", fillstyle="none")
+          
+  end
+  ax.set_xticks(θ_ind)
+  ax.set_xlabel(L"\theta" * " indices")
+  ax.legend(loc="center left", bbox_to_anchor=(0.95, 0.5))
+  fig.tight_layout()
+  fig.savefig("Barotropic-2D-density.pdf")
+end
 
 
 struct Setup_Param{FT<:AbstractFloat, IT<:Int, CT<:Complex}
