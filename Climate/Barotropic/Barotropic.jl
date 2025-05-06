@@ -2,6 +2,150 @@ using NNGCM
 using LinearAlgebra
 using Random
 import PyPlot
+include("../../Inversion/Plot.jl")
+
+
+function plot_field(spe_mesh::Spectral_Spherical_Mesh, grid_dat::Array{Float64,3}, level::Int64, clim, ax; cmap="viridis", obs_coord = nothing)
+    
+  λc, θc = spe_mesh.λc, spe_mesh.θc
+  nλ, nθ = length(λc), length(θc)
+  λc_deg, θc_deg = λc*180/pi, θc*180/pi
+  
+  X,Y = repeat(λc_deg, 1, nθ), repeat(θc_deg, 1, nλ)'
+  
+  im =  ax.pcolormesh(X, Y, grid_dat[:,:,level], shading= "gouraud", clim=clim, cmap=cmap)
+  
+  if !isnothing(obs_coord) 
+    x_obs, y_obs = λc_deg[obs_coord[:,1]], θc_deg[obs_coord[:,2]]
+    ax.scatter(x_obs, y_obs, color="black" , s = 0.6)
+  end
+
+  return im
+
+end
+
+function plot_results(barotropic, df_gmviobj)
+  N_modes, N_iter = df_gmviobj.N_modes, length(df_gmviobj.x_mean)-1
+  spe_mesh, N_θ = barotropic.mesh, barotropic.N_θ
+  N_ens = 2N_θ + 1
+  # visulize the log permeability field
+  fig_vor, ax_vor = PyPlot.subplots(ncols = N_modes+1, sharex=true, sharey=true, figsize=((N_modes+1)*5,5))
+  ax_vor = ax_vor[:]
+  for ax in ax_vor ;  ax.set_xticks([]) ; ax.set_yticks([]) ; end
+  color_lim = (minimum(barotropic.grid_vor), maximum(barotropic.grid_vor))
+
+  plot_field(spe_mesh, barotropic.grid_vor, 1, color_lim, ax_vor[1]) 
+  ax_vor[1].set_title("Truth")
+
+  spe_vor, grid_vor = copy(barotropic.spe_vor), copy(barotropic.grid_vor)
+
+  for m = 1:N_modes
+      Barotropic_ω0!(spe_mesh, "spec_vor", df_gmviobj.x_mean[N_iter][m,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
+      plot_field(spe_mesh, grid_vor, 1,  color_lim, ax_vor[m+1]) 
+      ax_vor[m+1].set_title("Mode " * string(m))
+  end
+
+
+
+  fig_vor.tight_layout()
+  fig_vor.savefig("Barotropic-2D-vor.pdf")
+
+
+
+
+  fig, (ax1, ax2, ax3, ax4) = PyPlot.subplots(ncols=4, figsize=(20,5))
+  ites = Array(LinRange(0, N_iter-1, N_iter))
+  errors = zeros(Float64, (3, N_iter, N_modes))
+  spe_vor, grid_vor = copy(barotropic.spe_vor), copy(barotropic.grid_vor)
+
+  for m = 1:N_modes
+      for i = 1:N_iter
+          
+          grid_vor_truth = barotropic.grid_vor
+          
+          
+          Barotropic_ω0!(spe_mesh, "spec_vor", df_gmviobj.x_mean[i][m,:], spe_vor, grid_vor; spe_vor_b = barotropic.spe_vor_b)
+          errors[1, i, m] = norm(grid_vor_truth - grid_vor)/norm(grid_vor_truth)
+          errors[2, i, m] = df_gmviobj.Phi_r_pred[i][m]
+          errors[3, i, m] = norm(df_gmviobj.xx_cov[i][m,:,:])
+
+          if i == N_iter
+            @info df_gmviobj.Phi_r_pred[i][m]
+          end
+          
+      end
+  end
+
+  # linestyles = ["o"; "x"; "s"]
+  markevery = 5
+  for m = 1: N_modes
+      ax1.plot(ites, errors[1, :, m], marker=m, color = "C"*string(m), fillstyle="none", markevery=markevery, label= "mode "*string(m))
+  end
+  ax1.set_xlabel("Iterations")
+  ax1.set_ylabel("Rel. error of a(x)")
+  ax1.legend()
+
+  for m = 1: N_modes
+      ax2.semilogy(ites, errors[2, :, m], marker=m, color = "C"*string(m), fillstyle="none", markevery=markevery, label= "mode "*string(m))
+  end
+  ax2.set_xlabel("Iterations")
+  ax2.set_ylabel(L"\Phi_R")
+  ax2.legend()
+
+  for m = 1: N_modes
+      ax3.plot(ites, errors[3, :, m], marker=m, color = "C"*string(m), fillstyle="none", markevery=markevery, label= "mode "*string(m))
+  end
+  ax3.set_xlabel("Iterations")
+  ax3.set_ylabel("Frobenius norm of covariance")
+  ax3.legend()
+
+
+  x_w = exp.(hcat(df_gmviobj.logx_w...))
+  for m = 1: N_modes
+      ax4.plot(ites, x_w[m, 1:N_iter], marker=m, color = "C"*string(m), fillstyle="none", markevery=markevery, label= "mode "*string(m))
+  end
+  ax4.set_xlabel("Iterations")
+  ax4.set_ylabel("Weights")
+  ax4.legend()
+  fig.tight_layout()
+  fig.savefig("Barotropic-2D-convergence.pdf")
+
+
+  fig, ax = PyPlot.subplots(ncols=1, figsize=(16,5))
+  θ_ref = barotropic.init_data
+
+  n_ind = N_θ
+  θ_ind = Array(1:n_ind)
+  ax.scatter(θ_ind, θ_ref[θ_ind], s = 100, marker="x", color="black", label="Truth")
+  for m = 1:N_modes
+      ax.scatter(θ_ind, df_gmviobj.x_mean[N_iter][m,θ_ind], s = 50, marker="o", color="C"*string(m), facecolors="none", label="Mode "*string(m))
+  end
+
+  Nx = 1000
+  for i in θ_ind
+      θ_min = minimum(df_gmviobj.x_mean[N_iter][:,i] .- 3sqrt.(df_gmviobj.xx_cov[N_iter][:,i,i]))
+      θ_max = maximum(df_gmviobj.x_mean[N_iter][:,i] .+ 3sqrt.(df_gmviobj.xx_cov[N_iter][:,i,i]))
+          
+      xxs = zeros(N_modes, Nx)  
+      zzs = zeros(N_modes, Nx)  
+      for m =1:N_modes
+          xxs[m, :], zzs[m, :] = Gaussian_1d(df_gmviobj.x_mean[N_iter][m,i], df_gmviobj.xx_cov[N_iter][m,i,i], Nx, θ_min, θ_max)
+          zzs[m, :] *= exp(df_gmviobj.logx_w[N_iter][m]) * 3
+      end
+      label = nothing
+      if i == 1
+          label = "GMVI"
+      end
+      ax.plot(sum(zzs, dims=1)' .+ i, xxs[1,:], linestyle="-", color="C0", fillstyle="none", label=label)
+      ax.plot(fill(i, Nx), xxs[1,:], linestyle=":", color="black", fillstyle="none")
+          
+  end
+  ax.set_xticks(θ_ind)
+  ax.set_xlabel(L"\theta" * " indices")
+  ax.legend(loc="center left", bbox_to_anchor=(0.95, 0.5))
+  fig.tight_layout()
+  fig.savefig("Barotropic-2D-density.pdf")
+end
 
 
 struct Setup_Param{FT<:AbstractFloat, IT<:Int, CT<:Complex}
@@ -14,7 +158,7 @@ struct Setup_Param{FT<:AbstractFloat, IT<:Int, CT<:Complex}
     omega::FT
     
     # for parameterization
-    Δt::IT
+    Δt::IT  # for simulation
     end_time::IT
     n_obs_frames::IT
     obs_time::IT
@@ -43,30 +187,20 @@ end
 
 
 function Setup_Param(num_fourier::IT,  nθ::IT, 
-                     Δt::IT, end_time::IT, n_obs_frames::IT, nobs::IT, antisymmetric::Bool, N_y::IT, trunc_N::IT; radius::FT = 6371.2e3, omega::FT = 7.292e-5) where {FT<:AbstractFloat, IT<:Int}
+                     Δt::IT, end_time::IT, 
+                     n_obs_frames::IT, obs_coord::Array{IT,2}, antisymmetric::Bool, 
+                     N_y::IT, trunc_N::IT, spe_mesh,
+                     grid_u_b::Array{FT,3}, grid_v_b::Array{FT,3}, grid_vor_b::Array{FT,3}, spe_vor_b::Array{CT,3},      # background velocity/vorticity profiles
+                     grid_u::Array{FT,3}, grid_v::Array{FT,3}, grid_vor::Array{FT,3}, spe_vor::Array{CT,3}, init_data::Array{FT,1};   # initial vorticity field
+                     radius::FT = 6371.2e3, omega::FT = 7.292e-5) where {FT<:AbstractFloat, IT<:Int, CT<:Complex}
     
     num_spherical = num_fourier + 1
     nλ = 2nθ
     N_θ = trunc_N^2 + 2*trunc_N
     obs_time = div(end_time, n_obs_frames)
-    mesh, grid_u_b, grid_v_b, grid_vor_b, spe_vor_b, grid_vor_pert, grid_u, grid_v, grid_vor, spe_vor, init_data = Barotropic_Init(num_fourier, nθ; trunc_N=trunc_N, radius=radius)
     
     
-    
-    Lat_Lon_Pcolormesh(mesh, grid_u_b,  1; save_file_name = "Figs/Barotropic_u_backgroud.pdf", cmap = "viridis")
-    Lat_Lon_Pcolormesh(mesh, grid_vor_b,  1; save_file_name = "Figs/Barotropic_vor_backgroud.pdf", cmap = "viridis")
-    Lat_Lon_Pcolormesh(mesh, grid_vor_pert, 1; save_file_name = "Figs/Barotropic_vor_pert0.pdf", cmap = "viridis")
-    Lat_Lon_Pcolormesh(mesh, grid_vor, 1; save_file_name = "Figs/Barotropic_vor0.pdf", cmap = "viridis")
-    Lat_Lon_Pcolormesh(mesh, grid_u, 1; save_file_name = "Figs/Barotropic_vel_u0.pdf", cmap = "viridis")
-    
-    
-    
-    obs_coord = zeros(Int64, nobs, 2)
-    Random.seed!(42)
-    obs_coord[:,1], obs_coord[:, 2] = rand(1:nλ-1, nobs), rand(Int64(nθ/2)+1:nθ-1, nobs)
-
-    
-    Setup_Param("barotropic_flow", num_fourier, nθ, mesh, radius, omega,
+    Setup_Param("barotropic_flow", num_fourier, nθ, spe_mesh, radius, omega,
         Δt, end_time, n_obs_frames, obs_time, 
         grid_u_b, grid_v_b, grid_vor_b, spe_vor_b, grid_u, 
         grid_v, grid_vor, spe_vor, init_data, 
@@ -74,9 +208,9 @@ function Setup_Param(num_fourier::IT,  nθ::IT,
 end
 
 
-
+# Initialize the vorticity field, background flow + vorticity perturbation
 # truncate the perturbation modes to trunc_N 
-function Barotropic_Init(num_fourier::IT, nθ::IT; trunc_N::IT = num_fourier, radius::FT = 6371.2e3) where {FT<:AbstractFloat, IT<:Int}
+function Barotropic_Init(num_fourier::IT, nθ::IT; trunc_N::IT = num_fourier, radius::FT = 6371.2e3, m = 4.0, θ0 = 45.0 * pi / 180,  θw = 15.0 * pi / 180.0, A = 8.0e-5, symmetric = false) where {FT<:AbstractFloat, IT<:Int}
     num_spherical = num_fourier + 1
     nλ = 2nθ
     nd = 1
@@ -103,12 +237,15 @@ function Barotropic_Init(num_fourier::IT, nθ::IT; trunc_N::IT = num_fourier, ra
     grid_u = Array{FT, 3}(undef, nλ, nθ, 1)
     grid_v = Array{FT, 3}(undef, nλ, nθ, 1)
     # ! adding a perturbation to the vorticity
-    m, θ0, θw, A = 4.0, 45.0 * pi / 180, 15.0 * pi / 180.0, 8.0e-5
+    
+    
     for i = 1:nλ
       for j = 1:nθ
-        grid_vor_pert[i,j, 1] = A / 2.0 * cosθ[j] * exp(-((θc[j] - θ0) / θw)^2) * cos(m * λc[i])
+        grid_vor_pert[i,j, 1] = A / 2.0 * cosθ[j] * cos(m * λc[i]) * ( symmetric ? exp(-((θc[j] - θ0) / θw)^2) + exp(-((θc[j] + θ0) / θw)^2) : exp(-((θc[j] - θ0) / θw)^2) )
       end
     end
+    
+
     spe_vor_pert = similar(spe_vor_b); spe_vor_pert .= 0.0;
     Trans_Grid_To_Spherical!(mesh, grid_vor_pert,  spe_vor_pert) 
     init_data = spe_to_param(spe_vor_pert, trunc_N; radius=radius)
@@ -167,83 +304,26 @@ function Barotropic_Init(num_fourier::IT, nθ::IT; trunc_N::IT = num_fourier, ra
     
 end
 
-function spe_to_param(spe_vor, trunc_N; radius=6371.2e3)
-    n_init_data = (trunc_N+1)*(trunc_N+1) - 1
-    init_data = zeros(n_init_data)
-    m = 0
-    for n = 1:trunc_N
-      init_data[n] = spe_vor[m+1,n+1,1] * radius
-    end
-    i_init_data = trunc_N
-    for m = 1:trunc_N
-      for n = m:trunc_N
-        # m = 1, 2, 3 .. m 
-        #     0  N  N-1...
-        #     N + N-1 ... N-m+2 
-        init_data[i_init_data + 1] =  real(spe_vor[m+1,n+1,1])*radius
-        init_data[i_init_data + 2] = -imag(spe_vor[m+1,n+1,1])*radius
-        i_init_data += 2
-      end 
-    end
-    return init_data
-end
-function param_to_spe(init_data, num_fourier; radius=6371.2e3)
-    num_spherical = num_fourier + 1
-    spe_vor = Array{ComplexF64, 3}(undef, num_fourier+1, num_spherical+1, 1)
-    spe_vor .= 0.0
-    
-    n_init_data = length(init_data)
-    N = Int64(sqrt(1 + n_init_data) - 1)
-    
-    m = 0
-    for n = 1:N
-      spe_vor[m+1,n+1,1] += init_data[n]/radius
-    end
-    i_init_data = N
-    for m = 1:N
-      for n = m:N
-        # m = 1, 2, 3 .. m 
-        #     0  N  N-1...
-        #     N + N-1 ... N-m+2 
-        spe_vor[m+1,n+1,1] += (init_data[i_init_data+1] - init_data[i_init_data + 2]*im)/radius
-        i_init_data += 2
-      end 
-    end
-    return spe_vor
-end
-    
 # function spe_to_param(spe_vor, trunc_N; radius=6371.2e3)
 #     n_init_data = (trunc_N+1)*(trunc_N+1) - 1
 #     init_data = zeros(n_init_data)
-    
-#     i_init_data = 1
+#     m = 0
 #     for n = 1:trunc_N
-#         m = 0
-#         init_data[i_init_data] = spe_vor[m+1,n+1,1]*radius
-        
-#         if (abs(init_data[i_init_data]) > 1e-8)
-#             @info m,n, spe_vor[m+1,n+1,1]*radius
-#         end
-#         i_init_data += 1
-#         for m = 1:n
-#             init_data[i_init_data] = real(spe_vor[m+1,n+1,1])*radius
-#             init_data[i_init_data + 1] = -imag(spe_vor[m+1,n+1,1])*radius
-            
-#             if (abs(init_data[i_init_data]) > 1e-8 || init_data[i_init_data + 1] > 1e-8)
-#             @info m,n, spe_vor[m+1,n+1,1]*radius
-#             end
-            
-            
-#             i_init_data += 2
-            
-            
-            
-#         end
+#       init_data[n] = spe_vor[m+1,n+1,1] * radius
 #     end
-
+#     i_init_data = trunc_N
+#     for m = 1:trunc_N
+#       for n = m:trunc_N
+#         # m = 1, 2, 3 .. m 
+#         #     0  N  N-1...
+#         #     N + N-1 ... N-m+2 
+#         init_data[i_init_data + 1] =  real(spe_vor[m+1,n+1,1])*radius
+#         init_data[i_init_data + 2] = -imag(spe_vor[m+1,n+1,1])*radius
+#         i_init_data += 2
+#       end 
+#     end
 #     return init_data
 # end
-
 # function param_to_spe(init_data, num_fourier; radius=6371.2e3)
 #     num_spherical = num_fourier + 1
 #     spe_vor = Array{ComplexF64, 3}(undef, num_fourier+1, num_spherical+1, 1)
@@ -252,21 +332,64 @@ end
 #     n_init_data = length(init_data)
 #     N = Int64(sqrt(1 + n_init_data) - 1)
     
-#     i_init_data = 1
+#     m = 0
 #     for n = 1:N
-#         m = 0
-#         spe_vor[m+1,n+1,1] += init_data[i_init_data]/radius
-#         i_init_data += 1
-#         for m = 1:n
-#             spe_vor[m+1,n+1,1] += (init_data[i_init_data] - init_data[i_init_data + 1]*im)/radius
-#             i_init_data += 2
-#         end
+#       spe_vor[m+1,n+1,1] += init_data[n]/radius
 #     end
-    
+#     i_init_data = N
+#     for m = 1:N
+#       for n = m:N
+#         # m = 1, 2, 3 .. m 
+#         #     0  N  N-1...
+#         #     N + N-1 ... N-m+2 
+#         spe_vor[m+1,n+1,1] += (init_data[i_init_data+1] - init_data[i_init_data + 2]*im)/radius
+#         i_init_data += 2
+#       end 
+#     end
 #     return spe_vor
 # end
+    
+function spe_to_param(spe_vor, trunc_N; radius=6371.2e3)
+    n_init_data = (trunc_N+1)*(trunc_N+1) - 1
+    init_data = zeros(n_init_data)
+    
+    i_init_data = 1
+    for n = 1:trunc_N
+        m = 0
+        init_data[i_init_data] = spe_vor[m+1,n+1,1]*radius
+        i_init_data += 1
+        for m = 1:n
+            init_data[i_init_data] = real(spe_vor[m+1,n+1,1])*radius
+            init_data[i_init_data + 1] = -imag(spe_vor[m+1,n+1,1])*radius        
+            i_init_data += 2   
+        end
+    end
+    return init_data
+end
 
-function Barotropic_Main(sparam::Setup_Param, init_data = nothing; init_type = "spec_vor")
+function param_to_spe(init_data, num_fourier; radius=6371.2e3)
+    num_spherical = num_fourier + 1
+    spe_vor = Array{ComplexF64, 3}(undef, num_fourier+1, num_spherical+1, 1)
+    spe_vor .= 0.0
+    
+    n_init_data = length(init_data)
+    N = Int64(sqrt(1 + n_init_data) - 1)
+    
+    i_init_data = 1
+    for n = 1:N
+        m = 0
+        spe_vor[m+1,n+1,1] += init_data[i_init_data]/radius
+        i_init_data += 1
+        for m = 1:n
+            spe_vor[m+1,n+1,1] += (init_data[i_init_data] - init_data[i_init_data + 1]*im)/radius
+            i_init_data += 2
+        end
+    end
+    
+    return spe_vor
+end
+
+function Barotropic_Main(sparam::Setup_Param, init_data)
   # the decay of a sinusoidal disturbance to a zonally symmetric flow 
   # that resembles that found in the upper troposphere in Northern winter.
   name = "Barotropic"
@@ -325,15 +448,12 @@ function Barotropic_Main(sparam::Setup_Param, init_data = nothing; init_type = "
   
   grid_vor_b = nothing
   
-    spe_div_c .= 0.0
-    grid_div  .= 0.0
-  if init_type == "truth"
-    _, _, _, _, _, _, grid_u[:], grid_v[:], grid_vor[:], spe_vor_c[:], _ = Barotropic_Init(num_fourier, nθ; trunc_N=sparam.trunc_N, radius = radius) 
-    
-  else
-    Barotropic_ω0!(mesh, init_type, init_data, spe_vor_c, grid_vor; spe_vor_b = sparam.spe_vor_b)
-    UV_Grid_From_Vor_Div!(mesh, spe_vor_c, spe_div_c, grid_u, grid_v)
-  end
+  spe_div_c .= 0.0
+  grid_div  .= 0.0
+  
+  Barotropic_ω0!(mesh, "spec_vor", init_data, spe_vor_c, grid_vor; spe_vor_b = sparam.spe_vor_b)
+  UV_Grid_From_Vor_Div!(mesh, spe_vor_c, spe_div_c, grid_u, grid_v)
+
   
   spe_vor0 = copy(spe_vor_c); grid_vor0 = copy(grid_vor)
   
@@ -487,10 +607,15 @@ function NNGCM.Lat_Lon_Pcolormesh(mesh::Spectral_Spherical_Mesh, grid_dat::Array
     end
     
 end
-###########################################################################################
-function aug_forward(barotropic::Setup_Param{FT, IT, CT}, θ::Array{FT, 1}) where {FT<:AbstractFloat, IT<:Int, CT<:Complex}
-      
-    mesh, obs_raw_data = Barotropic_Main(barotropic, θ; init_type = "spec_vor")
-    y = convert_obs(barotropic.obs_coord, obs_raw_data; antisymmetric=barotropic.antisymmetric)
-    return [y ; θ]
+
+
+
+function barotropic_F(barotropic::Setup_Param{FT, IT, CT}, args, θ::Array{FT, 1}) where {FT<:AbstractFloat, IT<:Int, CT<:Complex}
+  y_obs, r₀, ση, σ₀ = args
+
+  mesh, obs_raw_data = Barotropic_Main(barotropic, θ)
+  Gθ = convert_obs(barotropic.obs_coord, obs_raw_data; antisymmetric=barotropic.antisymmetric)
+
+  return [(y_obs  - Gθ)./ση; (r₀ - θ)./σ₀]
+
 end
