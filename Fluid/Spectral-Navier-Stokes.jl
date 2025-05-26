@@ -342,7 +342,7 @@ function Setup_Param(ν::Float64, ub::Float64, vb::Float64,
     #observation
     if symmetric
         x_locs = Array(obs_ΔNx+1:obs_ΔNx:div(N,2))
-        y_locs = Array(1:obs_ΔNy:N)
+        y_locs = Array(obs_ΔNy+1:obs_ΔNy:div(N,2)) #Array(1:obs_ΔNy:N)
     else
         x_locs = Array(1:obs_ΔNx:N)
         y_locs = Array(1:obs_ΔNy:N)
