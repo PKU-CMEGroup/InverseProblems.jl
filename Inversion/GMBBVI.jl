@@ -146,7 +146,6 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max
     # dt = min(dt_max,  (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)) / (maximum(matrix_norm))) # keep the matrix postive definite, avoid too large cov update.
     dts = min.(dt_max,  (1.0) ./ (matrix_norm)) # avoid too large cov update.
     # dts .= minimum(dts)
-    # @info dts
 
     ########### update covariances, means, weights with different time steps
     x_mean_n = copy(x_mean) 
