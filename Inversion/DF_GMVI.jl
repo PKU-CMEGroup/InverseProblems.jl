@@ -255,7 +255,7 @@ function DF_GMVI_Run(
     update_covariance::Bool = true, 
     sqrt_matrix_type::String = "Cholesky",
     # setup for Gaussian mixture part
-    quadrature_type_GM::String = "cubature_transform_o5",
+    quadrature_type_GM::String = "mean_point",
     c_weight_GM::FT = sqrt(3.0),
     N_ens_GM::IT = -1,
     Hessian_correct_GM::Bool = true,

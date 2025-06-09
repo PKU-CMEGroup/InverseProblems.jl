@@ -138,14 +138,17 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max
 
     end
     
-    matrix_norm = []
+    matrix_norm = zeros(N_modes)
     for im = 1 : N_modes
-        push!(matrix_norm, opnorm(log_ratio_xx_mean[im,:,:], 2))
+        matrix_norm[im] = opnorm(log_ratio_xx_mean[im,:,:], 2)
     end
     # set an upper bound dt_max, with cos annealing
-    dt = min(dt_max,  (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)) / (maximum(matrix_norm))) # keep the matrix postive definite, avoid too large cov update.
-    
-    ########### update covariances, means, weights
+    # dt = min(dt_max,  (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)) / (maximum(matrix_norm))) # keep the matrix postive definite, avoid too large cov update.
+    dts = min.(dt_max,  (1.0) ./ (matrix_norm)) # avoid too large cov update.
+    # dts .= minimum(dts)
+    # @info dts
+
+    ########### update covariances, means, weights with different time steps
     x_mean_n = copy(x_mean) 
     xx_cov_n = copy(xx_cov)
     logx_w_n = copy(logx_w)
@@ -154,21 +157,21 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max
         
         for im =1:N_modes
             
-            sqrt_xx_cov_n = sqrt_xx_cov[im] * exp(-dt*0.5*log_ratio_xx_mean[im,:,:])
+            sqrt_xx_cov_n = sqrt_xx_cov[im] * exp(-dts[im]*0.5*log_ratio_xx_mean[im,:,:])
             xx_cov_n[im,:,:] = sqrt_xx_cov_n * sqrt_xx_cov_n'
-            x_mean_n[im,:] += -dt * sqrt_xx_cov_n * log_ratio_x_mean[im,:]
+            x_mean_n[im,:] += -dts[im] * sqrt_xx_cov_n * log_ratio_x_mean[im,:]
 
             if diagonal_covariance
                 xx_cov_n[im, :, :] = diagm(diag(xx_cov_n[im, :, :]))
             end
             if !isposdef(Hermitian(xx_cov_n[im, :, :]))
                 @show gmgd.iter
-                @info "error! negative determinant for mode ", im,  x_mean[im, :], xx_cov[im, :, :], inv(xx_cov[im, :, :])
+                @info "error! negative determinant for mode ", im,  x_mean[im, :], xx_cov[im, :, :], inv(xx_cov[im, :, :]), xx_cov_n[im, :, :]
                 @assert(isposdef(xx_cov_n[im, :, :]))
             end
         end
     end 
-    logx_w_n += dt * d_logx_w
+    logx_w_n += dts .* d_logx_w
 
     # Normalization
     w_min = gmgd.w_min
@@ -192,7 +195,7 @@ end
 """ func_Phi: the potential function, i.e the posterior is proportional to exp( - func_Phi )"""
 ##########
 function Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov;
-        diagonal_covariance::Bool = false, N_iter = 100, dt = 5.0e-1, N_ens = -1, w_min = 1.0e-8)
+        diagonal_covariance::Bool = false, N_iter = 100, dt = 5.0e-1, N_ens = -1, w_min = 1.0e-8, sqrt_matrix_type = "Cholesky")
 
     _, N_x = size(x0_mean) 
     if N_ens == -1 
