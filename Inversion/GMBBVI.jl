@@ -7,7 +7,7 @@ using DocStringExtensions
 include("QuadratureRule.jl")
 include("GaussianMixture.jl")
 
-mutable struct BBVIObj{FT<:AbstractFloat, IT<:Int}
+mutable struct GMBBVIObj{FT<:AbstractFloat, IT<:Int}
     "object name"
     name::String
     "a vector of arrays of size (N_modes) containing the modal weights of the parameters"
@@ -24,8 +24,6 @@ mutable struct BBVIObj{FT<:AbstractFloat, IT<:Int}
     iter::IT
     "update covariance or not"
     update_covariance::Bool
-    "weather to keep covariance matrix diagonal"
-    diagonal_covariance::Bool
     "Cholesky, SVD"
     sqrt_matrix_type::String
     "number of sampling points (to compute expectation using MC)"
@@ -35,12 +33,11 @@ mutable struct BBVIObj{FT<:AbstractFloat, IT<:Int}
 end
 
 
-function BBVIObj(
+function GMBBVIObj(
                 x0_w::Array{FT, 1},
                 x0_mean::Array{FT, 2},
                 xx0_cov::Union{Array{FT, 3}, Nothing};
                 update_covariance::Bool = true,
-                diagonal_covariance::Bool = false,
                 sqrt_matrix_type::String = "Cholesky",
                 # setup for Gaussian mixture part
                 N_ens::IT = 10,
@@ -55,18 +52,18 @@ function BBVIObj(
     xx_cov = Array{FT,3}[]      # array of Array{FT, 2}'s
     push!(xx_cov, xx0_cov)      # insert parameters at end of array (in this case just 1st entry)
     
-    name = "BBVI"
+    name = "GMBBVI"
 
     iter = 0
 
-    BBVIObj(name,
+    GMBBVIObj(name,
             logx_w, x_mean, xx_cov, N_modes, N_x,
-            iter, update_covariance, diagonal_covariance, 
+            iter, update_covariance,
             sqrt_matrix_type, N_ens, w_min)
 end
 
 
-function ensemble_BBVI(x_ens, forward)
+function ensemble_GMBBVI(x_ens, forward)
     N_modes, N_ens, N_x = size(x_ens)
     F = zeros(N_modes, N_ens)   
     
@@ -80,11 +77,10 @@ function ensemble_BBVI(x_ens, forward)
 end
 
 
-function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max::FT, iter::IT, N_iter::IT) where {FT<:AbstractFloat, IT<:Int} #从某一步到下一步的步骤
+function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_max::FT, iter::IT, N_iter::IT) where {FT<:AbstractFloat, IT<:Int} #从某一步到下一步的步骤
     
     update_covariance = gmgd.update_covariance
     sqrt_matrix_type = gmgd.sqrt_matrix_type
-    diagonal_covariance = gmgd.diagonal_covariance
 
     gmgd.iter += 1
     N_x,  N_modes = gmgd.N_x, gmgd.N_modes
@@ -160,9 +156,6 @@ function update_ensemble!(gmgd::BBVIObj{FT, IT}, ensemble_func::Function, dt_max
             xx_cov_n[im,:,:] = sqrt_xx_cov_n * sqrt_xx_cov_n'
             x_mean_n[im,:] += -dts[im] * sqrt_xx_cov_n * log_ratio_x_mean[im,:]
 
-            if diagonal_covariance
-                xx_cov_n[im, :, :] = diagm(diag(xx_cov_n[im, :, :]))
-            end
             if !isposdef(Hermitian(xx_cov_n[im, :, :]))
                 @show gmgd.iter
                 @info "error! negative determinant for mode ", im,  x_mean[im, :], xx_cov[im, :, :], inv(xx_cov[im, :, :]), xx_cov_n[im, :, :]
@@ -193,23 +186,22 @@ end
 
 """ func_Phi: the potential function, i.e the posterior is proportional to exp( - func_Phi )"""
 ##########
-function Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov;
-        diagonal_covariance::Bool = false, N_iter = 100, dt = 5.0e-1, N_ens = -1, w_min = 1.0e-8, sqrt_matrix_type = "Cholesky")
+function Gaussian_mixture_GMBBVI(func_Phi, x0_w, x0_mean, xx0_cov;
+         N_iter = 100, dt = 5.0e-1, N_ens = -1, w_min = 1.0e-8, sqrt_matrix_type = "Cholesky")
 
     _, N_x = size(x0_mean) 
     if N_ens == -1 
         N_ens = 2*N_x+1  
     end
 
-    gmgdobj=BBVIObj(
+    gmgdobj=GMBBVIObj(
         x0_w, x0_mean, xx0_cov;
         update_covariance = true,
-        diagonal_covariance = diagonal_covariance,
         sqrt_matrix_type = "Cholesky",
         N_ens = N_ens,
         w_min = w_min)
 
-    func(x_ens) = ensemble_BBVI(x_ens, func_Phi) 
+    func(x_ens) = ensemble_GMBBVI(x_ens, func_Phi) 
 
     for i in 1:N_iter
         if i%max(1, div(N_iter, 10)) == 0  @info "iter = ", i, " / ", N_iter  end
