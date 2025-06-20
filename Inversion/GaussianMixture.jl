@@ -32,6 +32,25 @@ function Gaussian_mixture_density(x_w::Array{FT,1}, x_mean::Array{FT,2}, inv_sqr
 end
 
 
+# for diagonal Gaussian mixture
+# compute Gaussian mixture density (e.g, ρ) without 1/(2π^N_x/2) at x
+# input : Gaussian mixture weights, means, the inverse of sqrt(covs), and x
+function Gaussian_mixture_density(x_w::Array{FT,1}, x_mean::Array{FT,2}, inv_sqrt_xx_cov::Array{FT,2}, x_p::Array{FT,2}) where {FT<:AbstractFloat}
+    N_modes, N_x = size(x_mean)
+    N_p, _ = size(x_p)
+    ρ = zeros(FT, N_p)
+
+    for im in 1:N_modes
+        x_p_demeaned = x_p .- x_mean[im,:]'            # Compute differences with respect to the mean for all points at once
+        mahalanobis = vec(sum((x_p_demeaned' .* inv_sqrt_xx_cov[im,:]) .^ 2, dims=1))  # Vectorized Mahalanobis distance
+        norm_const = prod(inv_sqrt_xx_cov[im,:])  # Normalization constant
+        ρ .+= x_w[im] * norm_const * exp.(-0.5 * mahalanobis)  # Vectorized computation
+    end
+
+    return ρ
+end
+
+
 # compute derivatives of Gaussian mixture density (e.g, ρ, ∇ρ, ∇²ρ) without 1/(2π^N_x/2) at x
 # input : Gaussian mixture weights, means, the inverse of sqrt(covs), and x
 # input : Hessian_correct_GM , whether correct ∇²ρ computation

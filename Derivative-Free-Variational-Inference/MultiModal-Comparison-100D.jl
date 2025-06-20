@@ -9,7 +9,7 @@ include("../Inversion/Plot.jl")
 
 
 
-function visualization_comparison_100d(ax, obj_BBVI= nothing, obj_MCMC = nothing; Nx = 200, Ny = 200, x_lim=[-3.0, 3.0], y_lim=[-3.0, 3.0],
+function visualization_comparison_100d(ax, obj_GMBBVI= nothing, obj_MCMC = nothing; Nx = 200, Ny = 200, x_lim=[-3.0, 3.0], y_lim=[-3.0, 3.0],
     func_F = nothing, func_Phi = nothing, bandwidth=nothing, make_label::Bool=false, N_iter=500)
     
     
@@ -70,11 +70,11 @@ function visualization_comparison_100d(ax, obj_BBVI= nothing, obj_MCMC = nothing
 
 
 
-    if obj_BBVI !=nothing
-        error = zeros(length(obj_BBVI),N_iter+1)
+    if obj_GMBBVI !=nothing
+        error = zeros(length(obj_GMBBVI),N_iter+1)
         last_n_iters = 10  #use the last "last_n_iters" iterations to draw pictures
 
-        for (i, obj) in enumerate(obj_BBVI)
+        for (i, obj) in enumerate(obj_GMBBVI)
             for iter = 0:N_iter
                 x_w = exp.(obj.logx_w[iter+1]); x_w /= sum(x_w)
                 x_mean = obj.x_mean[iter+1][:,1:2]
@@ -91,7 +91,7 @@ function visualization_comparison_100d(ax, obj_BBVI= nothing, obj_MCMC = nothing
                 end
             end
         end
-        label = ["J="*string(obj.N_ens)  for obj in obj_BBVI ]
+        label = ["J="*string(obj.N_ens)  for obj in obj_GMBBVI ]
         ax[5].semilogy(Array(0:N_iter), error', label=label) 
     end
 
@@ -141,7 +141,7 @@ func_prob(x)= exp(log_prob(x))
 
 
 
-#########BBVI
+#########GMBBVI
 N_modes = 40
 x0_w  = ones(N_modes)/N_modes
 Random.seed!(111);
@@ -153,9 +153,9 @@ for im = 1:N_modes
     xx0_cov[im, :, :] .= Σ0
 end
 dt = 0.5
-BBVI = [Gaussian_mixture_BBVI(func_Phi, x0_w, x0_mean, xx0_cov; N_iter = N_iter, dt = dt, N_ens=N_ens)
+GMBBVI = [Gaussian_mixture_GMBBVI(func_Phi, x0_w, x0_mean, xx0_cov; N_iter = N_iter, dt = dt, N_ens=N_ens)
         for N_ens in N_ens_array]
-visualization_comparison_100d(ax[1, :], BBVI , nothing; Nx = Nx, Ny = Ny, x_lim=[-4.0, 4.0], y_lim=[-4.0, 4.0], func_F=func_F_marginal, 
+visualization_comparison_100d(ax[1, :], GMBBVI , nothing; Nx = Nx, Ny = Ny, x_lim=[-4.0, 4.0], y_lim=[-4.0, 4.0], func_F=func_F_marginal, 
     bandwidth=(0.32,0.22), make_label=true,  N_iter= N_iter)
 
 
