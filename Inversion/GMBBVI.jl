@@ -22,8 +22,6 @@ mutable struct GMBBVIObj{FT<:AbstractFloat, IT<:Int}
     N_x::IT
     "current iteration number"
     iter::IT
-    "update covariance or not"
-    update_covariance::Bool
     "Cholesky, SVD"
     sqrt_matrix_type::String
     "number of sampling points (to compute expectation using MC)"
@@ -37,7 +35,6 @@ function GMBBVIObj(
                 x0_w::Array{FT, 1},
                 x0_mean::Array{FT, 2},
                 xx0_cov::Union{Array{FT, 3}, Nothing};
-                update_covariance::Bool = true,
                 sqrt_matrix_type::String = "Cholesky",
                 # setup for Gaussian mixture part
                 N_ens::IT = 10,
@@ -58,8 +55,7 @@ function GMBBVIObj(
 
     GMBBVIObj(name,
             logx_w, x_mean, xx_cov, N_modes, N_x,
-            iter, update_covariance,
-            sqrt_matrix_type, N_ens, w_min)
+            iter, sqrt_matrix_type, N_ens, w_min)
 end
 
 
@@ -79,7 +75,6 @@ end
 
 function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_max::FT, iter::IT, N_iter::IT) where {FT<:AbstractFloat, IT<:Int} #从某一步到下一步的步骤
     
-    update_covariance = gmgd.update_covariance
     sqrt_matrix_type = gmgd.sqrt_matrix_type
 
     gmgd.iter += 1
@@ -87,7 +82,6 @@ function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_m
 
     x_mean  = gmgd.x_mean[end]
     logx_w  = gmgd.logx_w[end]
-    x_w = exp.(logx_w)
     xx_cov  = gmgd.xx_cov[end]
     x_w = exp.(logx_w)
     x_w /= sum(x_w)
@@ -133,36 +127,35 @@ function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_m
         d_logx_w[im] = -log_ratio_mean[im]
 
     end
-    
     matrix_norm = zeros(N_modes)
     for im = 1 : N_modes
         matrix_norm[im] = opnorm(log_ratio_xx_mean[im,:,:], 2)
     end
     # set an upper bound dt_max, with cos annealing
-    # dt = min(dt_max,  (0.01 + (1.0 - 0.01)*cos(pi/2 * iter/N_iter)) / (maximum(matrix_norm))) # keep the matrix postive definite, avoid too large cov update.
-    dts = min.(dt_max,  (1.0) ./ (matrix_norm)) # avoid too large cov update.
-    # dts .= minimum(dts)
-
+    dts = min.(dt_max,  (0.1 + (1.0 - 0.1)*cos(pi/2 * iter/N_iter)) ./ (matrix_norm)) # keep the matrix postive definite, avoid too large cov update.
+    # dts = min.(dt_max,  (1.0) ./ (matrix_norm)) # avoid too large cov update.
+    dts .= minimum(dts)
+    # @info "dt = ", dts[1]
     ########### update covariances, means, weights with different time steps
     x_mean_n = copy(x_mean) 
     xx_cov_n = copy(xx_cov)
     logx_w_n = copy(logx_w)
 
-    if update_covariance
+    # update xx_cov_n and sqrt_xx_cov
+    
+    for im =1:N_modes
+        sqrt_xx_cov[im] *= exp(-dts[im]*0.5*log_ratio_xx_mean[im,:,:])
+        xx_cov_n[im,:,:] = sqrt_xx_cov[im] * sqrt_xx_cov[im]'
         
-        for im =1:N_modes
-            
-            sqrt_xx_cov_n = sqrt_xx_cov[im] * exp(-dts[im]*0.5*log_ratio_xx_mean[im,:,:])
-            xx_cov_n[im,:,:] = sqrt_xx_cov_n * sqrt_xx_cov_n'
-            x_mean_n[im,:] += -dts[im] * sqrt_xx_cov_n * log_ratio_x_mean[im,:]
-
-            if !isposdef(Hermitian(xx_cov_n[im, :, :]))
-                @show gmgd.iter
-                @info "error! negative determinant for mode ", im,  x_mean[im, :], xx_cov[im, :, :], inv(xx_cov[im, :, :]), xx_cov_n[im, :, :]
-                @assert(isposdef(xx_cov_n[im, :, :]))
-            end
+        if !isposdef(Hermitian(xx_cov_n[im, :, :]))
+            @show gmgd.iter
+            @info "error! negative determinant for mode ", im,  x_mean[im, :], xx_cov[im, :, :], inv(xx_cov[im, :, :]), xx_cov_n[im, :, :]
+            @assert(isposdef(xx_cov_n[im, :, :]))
         end
     end 
+    for im =1:N_modes
+        x_mean_n[im,:] += -dts[im] * sqrt_xx_cov[im] * log_ratio_x_mean[im,:]
+    end
     logx_w_n += dts .* d_logx_w
 
     # Normalization
@@ -196,7 +189,6 @@ function Gaussian_mixture_GMBBVI(func_Phi, x0_w, x0_mean, xx0_cov;
 
     gmgdobj=GMBBVIObj(
         x0_w, x0_mean, xx0_cov;
-        update_covariance = true,
         sqrt_matrix_type = "Cholesky",
         N_ens = N_ens,
         w_min = w_min)

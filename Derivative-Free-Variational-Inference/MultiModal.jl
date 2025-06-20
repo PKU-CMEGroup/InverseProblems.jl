@@ -3,6 +3,9 @@ function G(θ, arg, Gtype = "Gaussian")
     if Gtype == "Gaussian"
         A = arg
         return [A*θ[1:2]; θ[3:end]-K*θ[1:2]]
+    elseif Gtype == "Logconcave"
+        λ = arg
+        return [(sqrt(λ)*θ[1] - θ[2]); θ[2]^2; θ[3:end]-K*θ[1:2]] 
     elseif Gtype == "Four_modes"
         return [(θ[1]- θ[2])^2 ; (θ[1] + θ[2])^2; θ[1:2]; θ[3:end]-K*θ[1:2]]
         
@@ -34,24 +37,6 @@ function Phi(θ, args)
     F = (y - Gθ) ./ ση
 
     return F'*F/2.0
-end
-
-function info_F(Gtype)
-    if Gtype == "Gaussian"
-        N_θ, N_f = 2, 2
-    elseif Gtype == "Four_modes"
-        N_θ, N_f = 2, 4
-    elseif Gtype == "Circle"
-        N_θ, N_f = 2, 1
-    elseif Gtype == "Banana"
-        N_θ, N_f = 2, 2
-    elseif Gtype == "Double_banana"
-        N_θ, N_f = 2, 3
-    else
-        print("Error in function G")
-    end
-    
-    return N_θ, N_f
 end
 
 
