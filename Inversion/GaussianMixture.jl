@@ -16,7 +16,7 @@ end
 
 # compute Gaussian mixture density (e.g, ρ) without 1/(2π^N_x/2) at x
 # input : Gaussian mixture weights, means, the inverse of sqrt(covs), and x
-function Gaussian_mixture_density(x_w::Array{FT,1}, x_mean::Array{FT,2}, inv_sqrt_xx_cov, x_p::Array{FT,2}) where {FT<:AbstractFloat}
+function Gaussian_mixture_density(x_w::Array{FT,1}, x_mean::Array{FT,2}, inv_sqrt_xx_cov::Vector{LowerTriangular{FT, Matrix{FT}}}, x_p::Array{FT,2}) where {FT<:AbstractFloat}
     N_modes, N_x = size(x_mean)
     N_p, _ = size(x_p)
     ρ = zeros(FT, N_p)
@@ -30,6 +30,7 @@ function Gaussian_mixture_density(x_w::Array{FT,1}, x_mean::Array{FT,2}, inv_sqr
 
     return ρ
 end
+
 
 
 # for diagonal Gaussian mixture

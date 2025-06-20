@@ -104,7 +104,6 @@ function construct_ensemble(x_mean, sqrt_cov; c_weights = nothing, N_ens = 100)
         # generate random weights on the fly
         c_weights = rand(Normal(0, 1), N_x, N_ens)
         
-        
         # enforce symmetry
         # if N_ens %2 == 0
         #     c_weights[:, div(N_ens, 2)+1:end] = -c_weights[:, 1:div(N_ens, 2)]
@@ -115,13 +114,12 @@ function construct_ensemble(x_mean, sqrt_cov; c_weights = nothing, N_ens = 100)
         # # enforce empirical covariance, no need
         # L = cholesky(c_weights * c_weights'/N_ens).L
         # c_weights = L\c_weights
-
+        
         c_mean = c_weights * ones(N_ens) / N_ens
-        c_weights = c_weights .- c_mean
+        c_weights .-= c_mean
         L = cholesky(c_weights * c_weights'/N_ens).L
         c_weights = L\c_weights
-
-
+        
         xs = ones(N_ens)*x_mean' + (sqrt_cov * c_weights)'
     else
         N_ens = size(c_weights,2)
