@@ -170,28 +170,24 @@ function update_ensemble!(gmgd::DF_GMVIObj{FT, IT}, func::Function, dt_max::FT) 
         end
     end
     logρ_mean, ∇logρ_mean, ∇²logρ_mean  = compute_logρ_gm_expectation(exp.(logx_w), x_mean, sqrt_xx_cov, inv_sqrt_xx_cov, x_p, mean_weights_GM, gmgd.Hessian_correct_GM)
-    
     ########## update covariance
     for im = 1:N_modes
         dt = dt_max
         # update covariance
         if update_covariance
 
-            # xx_cov_n[im, :, :] =   inv( Hermitian(inv(xx_cov[im, :, :]) + dt*(∇²logρ_mean[im, :, :] + ∇²Φᵣ_mean[im, :, :]) ))
-            
-            xx_cov_n[im, :, :] =   inv( Hermitian(inv(xx_cov[im, :, :]) + dt*(∇²logρ_mean[im, :, :] + ∇²Φᵣ_mean[im, :, :]) ))
+            inv_sqrt_xx_cov_n = inv(cholesky( Hermitian(inv_sqrt_xx_cov[im]'*inv_sqrt_xx_cov[im] + dt*(∇²logρ_mean[im, :, :] + ∇²Φᵣ_mean[im, :, :]) )).L)
+            xx_cov_n[im, :, :] = inv_sqrt_xx_cov_n' * inv_sqrt_xx_cov_n
             
             if !isposdef(xx_cov_n[im, :, :])
                 @info "error! negative determinant for mode ", im,  x_mean[im, :], xx_cov[im, :, :], inv(xx_cov[im, :, :]), ∇²logρ_mean[im, :, :], ∇²Φᵣ_mean[im, :, :]
                 @info " mean residual ", ∇logρ_mean[im, :] , ∇Φᵣ_mean[im, :], ∇logρ_mean[im, :] + ∇Φᵣ_mean[im, :]
                 @assert(isposdef(xx_cov_n[im, :, :]))
             end
-            
         else
             xx_cov_n[im, :, :] = xx_cov[im, :, :]
         end
     end
-
 
     ########## update mean
     for im = 1:N_modes
@@ -199,7 +195,6 @@ function update_ensemble!(gmgd::DF_GMVIObj{FT, IT}, func::Function, dt_max::FT) 
         # update mean
         x_mean_n[im, :]  =  x_mean[im, :] - dt*xx_cov_n[im, :, :]*(∇logρ_mean[im, :] + ∇Φᵣ_mean[im, :]) 
     end
-
 
     ########## update weights
     for im = 1:N_modes
@@ -211,7 +206,6 @@ function update_ensemble!(gmgd::DF_GMVIObj{FT, IT}, func::Function, dt_max::FT) 
         # the second term is independent of k, it is a normalization term
         logx_w_n[im] = logx_w[im] - dt*(logρ_mean[im] + Φᵣ_mean[im])
     end
-    
     # Normalization
     w_min = gmgd.w_min
     logx_w_n .-= maximum(logx_w_n)

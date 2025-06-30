@@ -126,7 +126,9 @@ function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_m
     matrix_norm = [maximum(abs.(eigens[im].values)) for im = 1:N_modes]
     
     # set an upper bound dt_max, with cos annealing
-    dts = min.(dt_max,  (0.1 + (1.0 - 0.1)*cos(pi/2 * iter/N_iter)) ./ (matrix_norm)) # keep the matrix postive definite, avoid too large cov update.
+    dts = min.(dt_max,  (0.2 + (1.0 - 0.2)*(1.0 + cos(iter/N_iter * pi))/2.0) ./ (matrix_norm)) # keep the matrix postive definite, avoid too large cov update.
+    # dts = min.(dt_max, 0.5 ./ (matrix_norm)) # keep the matrix postive definite, avoid too large cov update.
+    
     dts .= minimum(dts)
     
     
