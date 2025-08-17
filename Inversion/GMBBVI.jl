@@ -6,6 +6,7 @@ using Statistics
 using DocStringExtensions
 include("QuadratureRule.jl")
 include("GaussianMixture.jl")
+include("Scheduler.jl")
 
 mutable struct GMBBVIObj{FT<:AbstractFloat, IT<:Int}
     "object name"
@@ -126,8 +127,8 @@ function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_m
     matrix_norm = [maximum(abs.(eigens[im].values)) for im = 1:N_modes]
     
     # set an upper bound dt_max, with cos annealing
-    dts = min.(dt_max,  (0.2 + (1.0 - 0.2)*(1.0 + cos(iter/N_iter * pi))/2.0) ./ (matrix_norm)) # keep the matrix postive definite, avoid too large cov update.
-    # dts = min.(dt_max, 0.5 ./ (matrix_norm)) # keep the matrix postive definite, avoid too large cov update.
+    # dts = cos_annealing(iter, N_iter, 0.1, 1.0) * min.(dt_max,   dt_max ./ (matrix_norm)) # keep the matrix postive definite, avoid too large cov update.
+    dts = stable_cos_decay(iter, N_iter, 0.1, 1.0; N_decay = 0.5*N_iter) * min.(dt_max,   dt_max./ (matrix_norm)) # keep the matrix postive definite, avoid too large cov update.
     
     dts .= minimum(dts)
     
