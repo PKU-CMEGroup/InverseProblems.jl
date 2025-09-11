@@ -1,0 +1,282 @@
+using Random
+using PyPlot
+using Distributions
+using LinearAlgebra
+using Statistics
+using DocStringExtensions
+
+include("../Derivative-Free-Variational-Inference/EstimateTstart.jl")
+include("./GMBBVI.jl")
+
+"""
+    AnnealingSchedule{FT<:AbstractFloat}
+
+一个用于存储退火计划参数和状态的小型结构体。
+"""
+mutable struct AnnealingSchedule{FT<:AbstractFloat}
+    "是否启用退火"
+    enable::Bool
+    "初始温度"
+    T_start::FT
+    "最终温度"
+    T_end::FT
+    "当前温度"
+    current_T::FT
+end
+
+function AnnealingSchedule(; 
+        enable::Bool=true, 
+        T_start::FT=10.0, 
+        T_end::FT=1.0, 
+        ) where {FT<:AbstractFloat}
+    
+    initial_T = enable ? T_start : T_end
+    return AnnealingSchedule{FT}(enable, T_start, T_end, initial_T)
+end
+
+mutable struct GMBBVIAnnealingObj{FT<:AbstractFloat, IT<:Int}
+    "object name"
+    name::String
+    "a vector of arrays of size (N_modes) containing the modal weights of the parameters"
+    logx_w::Vector{Array{FT, 1}} 
+    "a vector of arrays of size (N_modes x N_parameters) containing the modal means of the parameters"
+    x_mean::Vector{Array{FT, 2}} 
+    "a vector of arrays of size (N_modes x N_parameters x N_parameters) containing the modal covariances of the parameters"
+    xx_cov::Vector{Array{FT, 3}}
+    "a vector of lower triangular square root matrix for current time step of size (N_parameters x N_parameters)"
+    sqrt_xx_cov::Vector{LowerTriangular{FT, Matrix{FT}}}
+    "number of modes"
+    N_modes::IT
+    "size of x"
+    N_x::IT
+    "current iteration number"
+    iter::IT
+    "number of sampling points (to compute expectation using MC)"
+    N_ens::IT
+    "weight clipping"
+    w_min::FT
+    "Annealing schedule object"
+    annealing::AnnealingSchedule{FT}
+end
+
+function GMBBVIAnnealingObj(
+                x0_w::Array{FT, 1},
+                x0_mean::Array{FT, 2},
+                xx0_cov::Array{FT, 3};
+                # setup for Gaussian mixture part
+                N_ens::IT = 10,
+                w_min::FT = 1.0e-8,
+                T_start::FT = 10.0,
+                T_end::FT = 1.0,
+                ) where {FT<:AbstractFloat, IT<:Int}
+
+    N_modes, N_x = size(x0_mean)
+
+    logx_w = Array{FT,1}[]
+    push!(logx_w, log.(x0_w))
+    x_mean = Array{FT,2}[]
+    push!(x_mean, x0_mean)
+    xx_cov = Array{FT,3}[]
+    push!(xx_cov, xx0_cov)
+
+    sqrt_xx_cov = [cholesky(xx0_cov[im,:,:]).L for im = 1:size(xx0_cov,1)]
+    name = "GMBBVI_Annealing"
+    iter = 0
+    
+    annealing_schedule = AnnealingSchedule(
+        enable=true, 
+        T_start=T_start, 
+        T_end=T_end, 
+    )
+
+    GMBBVIAnnealingObj(name,
+            logx_w, x_mean, xx_cov, sqrt_xx_cov, N_modes, N_x,
+            iter, N_ens, w_min, annealing_schedule)
+end
+
+
+"""
+    update_ensemble_annealing!
+
+"""
+function update_ensemble_annealing!(gmgd::GMBBVIAnnealingObj{FT, IT}, ensemble_func::Function, dt_max::FT, amplification_factor::FT, iter::IT, N_iter::IT) where {FT<:AbstractFloat, IT<:Int}
+    annealing = gmgd.annealing
+    progress = iter / N_iter
+    annealing.current_T = annealing.T_end + 0.5 * (annealing.T_start - annealing.T_end) * (1 + cos(pi * progress)) # Cosine schedule
+    
+    current_T = annealing.current_T
+
+    gmgd.iter += 1
+    N_x,  N_modes = gmgd.N_x, gmgd.N_modes
+    x_mean  = gmgd.x_mean[end]
+    logx_w  = gmgd.logx_w[end]
+    xx_cov  = gmgd.xx_cov[end]
+    x_w = exp.(logx_w)
+    x_w /= sum(x_w)
+    sqrt_xx_cov = gmgd.sqrt_xx_cov
+    inv_sqrt_xx_cov = [inv(sqrt_xx_cov[im]) for im =1:N_modes]
+    
+    N_ens = gmgd.N_ens
+    x_p_normal = zeros(N_modes, N_ens, N_x)
+    x_p = zeros(N_modes, N_ens, N_x)
+    for im = 1:N_modes
+        x_p_normal[im,:,:] = construct_ensemble(zeros(N_x), I(N_x); c_weights = nothing, N_ens = N_ens)
+        x_p[im,:,:] = x_p_normal[im,:,:]*sqrt_xx_cov[im]' .+ x_mean[im,:]'
+    end
+
+    Phi_R = ensemble_func(x_p)
+
+    log_rhoa = log.(Gaussian_mixture_density(x_w, x_mean, inv_sqrt_xx_cov, reshape(x_p, N_modes*N_ens, N_x))) 
+    log_rhoa = reshape(log_rhoa, N_modes, N_ens)    
+    
+    log_ratio = log_rhoa + Phi_R / current_T
+    
+    log_ratio_mean = mean(log_ratio, dims=2)
+    log_ratio_demeaned = log_ratio .- log_ratio_mean
+    
+    d_logx_w, log_ratio_x_mean, log_ratio_xx_mean = zeros(N_modes), zeros(N_modes, N_x), zeros(N_modes, N_x, N_x)
+
+    for im = 1:N_modes 
+        log_ratio_x_mean[im,:] = log_ratio_demeaned[im, :]' * x_p_normal[im,:,:] / N_ens   
+        log_ratio_xx_mean[im,:,:] = x_p_normal[im,:,:]' * (x_p_normal[im,:,:] .* log_ratio_demeaned[im,:]) / N_ens
+        d_logx_w[im] = -log_ratio_mean[im]
+    end
+
+    eigens = [eigen(Symmetric(log_ratio_xx_mean[im,:,:])) for im = 1:N_modes]
+    matrix_norm = [maximum(abs.(eigens[im].values)) for im = 1:N_modes]
+
+    dts = min.(dt_max, (0.2 + (1.0 - 0.2)*(1.0 + cos(iter/N_iter * pi))/2.0) ./ (matrix_norm))
+    dts *= amplification_factor
+    
+    x_mean_n = copy(x_mean) 
+    xx_cov_n = copy(xx_cov)
+    logx_w_n = copy(logx_w)
+    sqrt_xx_cov_n_list = Vector{LowerTriangular{FT, Matrix{FT}}}(undef, N_modes)
+    
+    for im = 1:N_modes
+        sqrt_xx_cov_n    = sqrt_xx_cov[im] * (eigens[im].vectors .*  (exp.(-dts[im]*0.5*eigens[im].values))')
+        xx_cov_n[im,:,:] = sqrt_xx_cov_n  * sqrt_xx_cov_n'
+
+        try
+            L = cholesky(Hermitian(xx_cov_n[im,:,:])).L
+            sqrt_xx_cov_n_list[im] = L
+        catch e
+            if isa(e, PosDefException)
+                return (false, nothing, nothing, nothing, nothing) 
+            else
+                rethrow(e)
+            end
+        end
+    end 
+
+    for im = 1:N_modes
+        x_mean_n[im,:] += -dts[im] * sqrt_xx_cov_n_list[im] * log_ratio_x_mean[im,:]
+    end
+
+    logx_w_n += dts .* d_logx_w
+
+    w_min = gmgd.w_min
+    logx_w_n .-= maximum(logx_w_n)
+    logx_w_n .-= log( sum(exp.(logx_w_n)) )
+    x_w_n = exp.(logx_w_n)
+    clip_ind = x_w_n .< w_min
+    x_w_n[clip_ind] .= w_min
+    if sum(clip_ind) < length(x_w_n)
+        x_w_n[(!).(clip_ind)] /= (1 - sum(clip_ind)*w_min)/sum(x_w_n[(!).(clip_ind)])
+    end
+    logx_w_n .= log.(x_w_n)
+    
+    return (true, logx_w_n, x_mean_n, xx_cov_n, sqrt_xx_cov_n_list)
+end
+
+
+"""
+    initialize_with_annealing(func_Phi, x0_w, x0_mean, xx0_cov; kwargs...)
+
+执行一个带模拟退火的 GMBBVI 预热/初始化阶段。
+
+这个函数会运行一个完整的优化循环，但使用了温度来平滑目标分布，
+有助于在早期探索更广阔的参数空间，避免陷入局部最优。
+
+函数的返回值是经过退火优化后的权重、均值和协方差，
+可以直接用作标准 `Gaussian_mixture_GMBBVI` 函数的初始值。
+
+# Arguments
+- `func_Phi`: 势函数，后验概率与 `exp(-func_Phi)` 成正比。
+- `x0_w`, `x0_mean`, `xx0_cov`: 初始的高斯混合模型参数。
+
+# Keyword Arguments
+- `N_iter::Int=100`: 退火阶段的迭代次数。
+- `amplification_factor::Float64=8.0`: 退火阶段步长的放大倍数。
+- `N_ens::Int=-1`: 蒙特卡洛采样点数。
+- `w_min::Float64=1.0e-8`: 权重的最小裁剪值。
+
+# Returns
+- `(w_final, mean_final, cov_final)`: 优化后的高斯混合模型参数元组。
+"""
+function initialize_with_annealing(
+    func_Phi, 
+    x0_w, 
+    x0_mean, 
+    xx0_cov;
+    N_iter::Int = 100,
+    dt::Float64 = 0.5,
+    N_ens::Int = -1, 
+    w_min::Float64 = 1.0e-8,
+    factor::Float64 = 8.0
+)
+    T_start = suggested_T_start = estimate_T_start_from_gradients(
+        func_Phi, 
+        x0_w, 
+        x0_mean, 
+        xx0_cov;
+        N_ens=500,
+        alpha=0.1,
+        construct_ensemble_func = construct_ensemble,
+        ensemble_GMBBVI_func = ensemble_GMBBVI,
+        gaussian_mixture_density_func = Gaussian_mixture_density
+    )
+    T_end = 1.0
+    _, N_x = size(x0_mean) 
+    if N_ens == -1 
+        N_ens = 2*N_x+1  
+    end
+
+    # 使用我们为退火专门创建的 GMBBVIAnnealingObj
+    gmgd_anneal_obj = GMBBVIAnnealingObj(
+        x0_w, x0_mean, xx0_cov;
+        N_ens = N_ens,
+        w_min = w_min,
+        T_start = T_start,
+        T_end = T_end,
+    )
+
+    func = (x_ens) -> ensemble_GMBBVI(x_ens, func_Phi) 
+
+    i = 1
+    while i <= N_iter
+        amplification_factor = factor
+        while true
+            success, logx_w_n, x_mean_n, xx_cov_n, sqrt_xx_cov_n = update_ensemble_annealing!(gmgd_anneal_obj, func, dt, amplification_factor, i, N_iter)
+            if success
+                push!(gmgd_anneal_obj.logx_w, logx_w_n)
+                push!(gmgd_anneal_obj.x_mean, x_mean_n)
+                push!(gmgd_anneal_obj.xx_cov, xx_cov_n)
+                gmgd_anneal_obj.sqrt_xx_cov .= sqrt_xx_cov_n
+                gmgd_anneal_obj.iter = i 
+                break
+            else
+                amplification_factor -= 0.1
+            end
+        end
+        # println("$(amplification_factor)")
+        i += 1
+    end
+    
+    
+    w_final = exp.(gmgd_anneal_obj.logx_w[end])
+    mean_final = gmgd_anneal_obj.x_mean[end]
+    cov_final = gmgd_anneal_obj.xx_cov[end]
+    
+    return w_final, mean_final, cov_final
+end
