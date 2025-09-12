@@ -7,6 +7,7 @@ include("GaussianMixture.jl")
 include("QuadratureRule.jl")
 
 
+
 """
 DF_GMVIObj{FT<:AbstractFloat, IT<:Int}
 Struct that is used in sampling e^{-Phi_r} with Gaussian mixture gradient descent
