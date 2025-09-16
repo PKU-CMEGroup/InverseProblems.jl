@@ -18,6 +18,9 @@ function G(θ, arg, Gtype = "Gaussian")
     elseif Gtype == "Double_banana"
         λ = arg
         return [log( λ*(θ[2] - θ[1]^2)^2 + (1 - θ[1])^2 ); θ[1]; θ[2]; θ[3:end]-K*θ[1:2]]
+    elseif Gtype == "Funnel"
+        A = arg
+        return [θ[1]/3 + 3*(length(θ)-1)/2; A * θ[2:end] / exp(θ[1]/2)]
     else
         print("Error in function G")
     end
