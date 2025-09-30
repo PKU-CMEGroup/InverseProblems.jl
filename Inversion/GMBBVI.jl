@@ -74,7 +74,7 @@ function ensemble_GMBBVI(x_ens, forward)
 end
 
 
-function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_max::FT, iter::IT, N_iter::IT) where {FT<:AbstractFloat, IT<:Int} #从某一步到下一步的步骤
+function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_max::FT, iter::IT, N_iter::IT, scheduler_type::String) where {FT<:AbstractFloat, IT<:Int} #从某一步到下一步的步骤
     gmgd.iter += 1
     N_x,  N_modes = gmgd.N_x, gmgd.N_modes
 
@@ -126,7 +126,6 @@ function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_m
     eigens = [eigen(Symmetric(log_ratio_xx_mean[im,:,:])) for im = 1:N_modes]
     matrix_norm = [maximum(abs.(eigens[im].values)) for im = 1:N_modes]
     
-    scheduler_type = "constant"
     dts = scheduler(iter, N_iter, scheduler_type = scheduler_type) * min.(dt_max,   dt_max./ (matrix_norm)) 
     
     dts .= minimum(dts)
@@ -178,7 +177,7 @@ end
 """ func_Phi: the potential function, i.e the posterior is proportional to exp( - func_Phi )"""
 ##########
 function Gaussian_mixture_GMBBVI(func_Phi, x0_w, x0_mean, xx0_cov;
-         N_iter = 100, dt = 5.0e-1, N_ens = -1, w_min = 1.0e-8)
+         N_iter = 100, dt = 5.0e-1, N_ens = -1, scheduler_type = "stable_cos_decay", w_min = 1.0e-8)
 
     _, N_x = size(x0_mean) 
     if N_ens == -1 
@@ -195,7 +194,7 @@ function Gaussian_mixture_GMBBVI(func_Phi, x0_w, x0_mean, xx0_cov;
     for i in 1:N_iter
         if i%max(1, div(N_iter, 10)) == 0  @info "iter = ", i, " / ", N_iter  end
         
-        update_ensemble!(gmgdobj, func, dt,  i,  N_iter) 
+        update_ensemble!(gmgdobj, func, dt,  i,  N_iter, scheduler_type) 
     end
     
     return gmgdobj

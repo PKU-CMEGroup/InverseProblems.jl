@@ -145,7 +145,7 @@ function update_ensemble_annealing!(gmgd::GMBBVIAnnealingObj{FT, IT}, ensemble_f
     eigens = [eigen(Symmetric(log_ratio_xx_mean[im,:,:])) for im = 1:N_modes]
     matrix_norm = [maximum(abs.(eigens[im].values)) for im = 1:N_modes]
 
-    scheduler_type = "stable_cos_decay"
+    scheduler_type = "constant"
     dts = scheduler(iter, N_iter, scheduler_type = scheduler_type) * min.(dt_max,   dt_max./ (matrix_norm)) 
     
     dts = min.(dt_max, (0.2 + (1.0 - 0.2)*(1.0 + cos(iter/N_iter * pi))/2.0) ./ (matrix_norm))
