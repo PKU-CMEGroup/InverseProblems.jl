@@ -55,7 +55,19 @@ function dPhi(θ, args)
            -ForwardDiff.hessian(x -> logrho(x, args), θ)
 end
 
-
+function log_Gaussian_mixture(x, args)
+    x_w, x_mean, inv_sqrt_x_cov = args
+    # C = L L.T
+    # C^-1 = L^-TL^-1
+    N_x = size(x_mean, 2)
+    ρ = 0
+    exponents = [-0.5*(x-x_mean[im,:])'*(inv_sqrt_x_cov[im]'*inv_sqrt_x_cov[im]*(x-x_mean[im,:])) for im =1:length(x_w)]
+    mexponent = maximum(exponents)
+    for im = 1:length(x_w)
+        ρ += x_w[im]*exp(exponents[im] - mexponent)*det(inv_sqrt_x_cov[im])
+    end
+    return  log(ρ) + mexponent - N_x/2*log(2*π)
+end
 
 function Gaussian_mixture_VI(func_dPhi, func_F, w0, μ0, Σ0; N_iter = 100, dt = 1.0e-3, Hessian_correct_GM=true)
 

@@ -145,6 +145,9 @@ function update_ensemble_annealing!(gmgd::GMBBVIAnnealingObj{FT, IT}, ensemble_f
     eigens = [eigen(Symmetric(log_ratio_xx_mean[im,:,:])) for im = 1:N_modes]
     matrix_norm = [maximum(abs.(eigens[im].values)) for im = 1:N_modes]
 
+    scheduler_type = "stable_cos_decay"
+    dts = scheduler(iter, N_iter, scheduler_type = scheduler_type) * min.(dt_max,   dt_max./ (matrix_norm)) 
+    
     dts = min.(dt_max, (0.2 + (1.0 - 0.2)*(1.0 + cos(iter/N_iter * pi))/2.0) ./ (matrix_norm))
     dts *= amplification_factor
     
@@ -223,7 +226,7 @@ function initialize_with_annealing(
     dt::Float64 = 0.5,
     N_ens::Int = -1, 
     w_min::Float64 = 1.0e-8,
-    factor::Float64 = 8.0
+    factor::Float64 = 1.0
 )
     T_start = suggested_T_start = estimate_T_start_from_gradients(
         func_Phi, 
@@ -255,6 +258,7 @@ function initialize_with_annealing(
 
     i = 1
     while i <= N_iter
+        # @show i
         amplification_factor = factor
         while true
             success, logx_w_n, x_mean_n, xx_cov_n, sqrt_xx_cov_n = update_ensemble_annealing!(gmgd_anneal_obj, func, dt, amplification_factor, i, N_iter)
@@ -277,6 +281,6 @@ function initialize_with_annealing(
     w_final = exp.(gmgd_anneal_obj.logx_w[end])
     mean_final = gmgd_anneal_obj.x_mean[end]
     cov_final = gmgd_anneal_obj.xx_cov[end]
-    
+
     return w_final, mean_final, cov_final
 end
