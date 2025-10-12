@@ -5,7 +5,7 @@ using LinearAlgebra
 using Statistics
 using DocStringExtensions
 
-include("./EstimateTstart.jl")
+include("../Derivative-Free-Variational-Inference/EstimateTstart.jl")
 include("./GMBBVI.jl")
 
 """
@@ -99,7 +99,7 @@ end
     update_ensemble_annealing!
 
 """
-function update_ensemble_annealing!(gmgd::GMBBVIAnnealingObj{FT, IT}, ensemble_func::Function, dt_max::FT, amplification_factor::FT, iter::IT, N_iter::IT) where {FT<:AbstractFloat, IT<:Int}
+function update_ensemble_annealing!(gmgd::GMBBVIAnnealingObj{FT, IT}, ensemble_func::Function, dt_max::FT, iter::IT, N_iter::IT) where {FT<:AbstractFloat, IT<:Int}
     annealing = gmgd.annealing
     progress = iter / N_iter
     annealing.current_T = annealing.T_end + 0.5 * (annealing.T_start - annealing.T_end) * (1 + cos(pi * progress)) # Cosine schedule
@@ -145,11 +145,9 @@ function update_ensemble_annealing!(gmgd::GMBBVIAnnealingObj{FT, IT}, ensemble_f
     eigens = [eigen(Symmetric(log_ratio_xx_mean[im,:,:])) for im = 1:N_modes]
     matrix_norm = [maximum(abs.(eigens[im].values)) for im = 1:N_modes]
 
-    scheduler_type = "constant"
-    dts = scheduler(iter, N_iter, scheduler_type = scheduler_type) * min.(dt_max,   dt_max./ (matrix_norm)) 
-    
-    dts = min.(dt_max, (0.2 + (1.0 - 0.2)*(1.0 + cos(iter/N_iter * pi))/2.0) ./ (matrix_norm))
-    dts *= amplification_factor
+    # dts =  1 ./ (matrix_norm)
+    dts = min.(dt_max, 0.5 ./ (matrix_norm))
+    # dts = min.(dt_max, (0.2 + (1.0 - 0.2)*(1.0 + cos(iter/N_iter * pi))/2.0) ./ (matrix_norm))
     
     x_mean_n = copy(x_mean) 
     xx_cov_n = copy(xx_cov)
@@ -159,17 +157,8 @@ function update_ensemble_annealing!(gmgd::GMBBVIAnnealingObj{FT, IT}, ensemble_f
     for im = 1:N_modes
         sqrt_xx_cov_n    = sqrt_xx_cov[im] * (eigens[im].vectors .*  (exp.(-dts[im]*0.5*eigens[im].values))')
         xx_cov_n[im,:,:] = sqrt_xx_cov_n  * sqrt_xx_cov_n'
-
-        try
-            L = cholesky(Hermitian(xx_cov_n[im,:,:])).L
-            sqrt_xx_cov_n_list[im] = L
-        catch e
-            if isa(e, PosDefException)
-                return (false, nothing, nothing, nothing, nothing) 
-            else
-                rethrow(e)
-            end
-        end
+        L = cholesky(Hermitian(xx_cov_n[im,:,:])).L
+        sqrt_xx_cov_n_list[im] = L
     end 
 
     for im = 1:N_modes
@@ -189,34 +178,9 @@ function update_ensemble_annealing!(gmgd::GMBBVIAnnealingObj{FT, IT}, ensemble_f
     end
     logx_w_n .= log.(x_w_n)
     
-    return (true, logx_w_n, x_mean_n, xx_cov_n, sqrt_xx_cov_n_list)
+    return (logx_w_n, x_mean_n, xx_cov_n, sqrt_xx_cov_n_list)
 end
 
-
-"""
-    initialize_with_annealing(func_Phi, x0_w, x0_mean, xx0_cov; kwargs...)
-
-执行一个带模拟退火的 GMBBVI 预热/初始化阶段。
-
-这个函数会运行一个完整的优化循环，但使用了温度来平滑目标分布，
-有助于在早期探索更广阔的参数空间，避免陷入局部最优。
-
-函数的返回值是经过退火优化后的权重、均值和协方差，
-可以直接用作标准 `Gaussian_mixture_GMBBVI` 函数的初始值。
-
-# Arguments
-- `func_Phi`: 势函数，后验概率与 `exp(-func_Phi)` 成正比。
-- `x0_w`, `x0_mean`, `xx0_cov`: 初始的高斯混合模型参数。
-
-# Keyword Arguments
-- `N_iter::Int=100`: 退火阶段的迭代次数。
-- `amplification_factor::Float64=8.0`: 退火阶段步长的放大倍数。
-- `N_ens::Int=-1`: 蒙特卡洛采样点数。
-- `w_min::Float64=1.0e-8`: 权重的最小裁剪值。
-
-# Returns
-- `(w_final, mean_final, cov_final)`: 优化后的高斯混合模型参数元组。
-"""
 function initialize_with_annealing(
     func_Phi, 
     x0_w, 
@@ -226,9 +190,8 @@ function initialize_with_annealing(
     dt::Float64 = 0.5,
     N_ens::Int = -1, 
     w_min::Float64 = 1.0e-8,
-    factor::Float64 = 1.0
 )
-    T_start = suggested_T_start = estimate_T_start_from_gradients(
+    T_start =  estimate_T_start_from_gradients(
         func_Phi, 
         x0_w, 
         x0_mean, 
@@ -258,29 +221,18 @@ function initialize_with_annealing(
 
     i = 1
     while i <= N_iter
-        # @show i
-        amplification_factor = factor
-        while true
-            success, logx_w_n, x_mean_n, xx_cov_n, sqrt_xx_cov_n = update_ensemble_annealing!(gmgd_anneal_obj, func, dt, amplification_factor, i, N_iter)
-            if success
-                push!(gmgd_anneal_obj.logx_w, logx_w_n)
-                push!(gmgd_anneal_obj.x_mean, x_mean_n)
-                push!(gmgd_anneal_obj.xx_cov, xx_cov_n)
-                gmgd_anneal_obj.sqrt_xx_cov .= sqrt_xx_cov_n
-                gmgd_anneal_obj.iter = i 
-                break
-            else
-                amplification_factor -= 0.1
-            end
-        end
-        # println("$(amplification_factor)")
+        logx_w_n, x_mean_n, xx_cov_n, sqrt_xx_cov_n = update_ensemble_annealing!(gmgd_anneal_obj, func, dt, i, N_iter)
+        push!(gmgd_anneal_obj.logx_w, logx_w_n)
+        push!(gmgd_anneal_obj.x_mean, x_mean_n)
+        push!(gmgd_anneal_obj.xx_cov, xx_cov_n)
+        gmgd_anneal_obj.sqrt_xx_cov .= sqrt_xx_cov_n
+        gmgd_anneal_obj.iter = i 
         i += 1
     end
-    
     
     w_final = exp.(gmgd_anneal_obj.logx_w[end])
     mean_final = gmgd_anneal_obj.x_mean[end]
     cov_final = gmgd_anneal_obj.xx_cov[end]
-
+    
     return w_final, mean_final, cov_final
 end
