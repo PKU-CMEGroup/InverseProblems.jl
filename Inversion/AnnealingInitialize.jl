@@ -191,6 +191,17 @@ function initialize_with_annealing(
     N_ens::Int = -1, 
     w_min::Float64 = 1.0e-8,
 )
+
+    phi_max_val = 1.0e30
+    function func_Phi_stable(θ::AbstractVector{T}) where {T<:AbstractFloat}
+        val = func_Phi(θ)
+        if isfinite(val)
+            return min(val, T(phi_max_val))
+        else
+            return T(phi_max_val)
+        end
+    end
+    
     T_start =  estimate_T_start_from_gradients(
         func_Phi, 
         x0_w, 
