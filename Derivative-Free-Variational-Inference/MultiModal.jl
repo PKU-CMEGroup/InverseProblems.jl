@@ -55,6 +55,23 @@ function dPhi(θ, args)
            -ForwardDiff.hessian(x -> logrho(x, args), θ)
 end
 
+function multimodal_moments(Gtype::String)
+    if Gtype == "Circle"
+        return ([0, 0], [0.5002314411516613 0; 0 0.5002314411516613])
+    elseif Gtype == "Banana"
+        return ([0.9999999820951503, 10.999999610616223],
+        [10.999999610635019 30.999992090185334; 30.999992090185334 361.09983180877657])
+    elseif Gtype == "Funnel"
+        return ([0, 0], 
+        [9.0 0; 0 54.67959866084672])
+    elseif Gtype == "Gaussian_mixture"
+        return ([-1.205, -0.865],
+        [17.279671070293197 0.6809403064876811; 0.6809403064876809 15.33721856523279])
+    else
+        @error "Error in function G"
+    end
+end
+
 function log_Gaussian_mixture(x, args)
     x_w, x_mean, inv_sqrt_x_cov = args
     # C = L L.T
@@ -67,6 +84,27 @@ function log_Gaussian_mixture(x, args)
         ρ += x_w[im]*exp(exponents[im] - mexponent)*det(inv_sqrt_x_cov[im])
     end
     return  log(ρ) + mexponent - N_x/2*log(2*π)
+end
+
+function Gaussian_mixture_args(;N_x::Int=2)
+    x_w_ref = [0.12, 0.05, 0.1, 0.06, 0.12, 0.08, 0.08, 0.12, 0.12, 0.15]
+    x_mean_0 = [-5.0 5.0; 4.0 6.0; 4.0 3.0; -0.25 0.75; 0.75 -0.75; -3.5 0; -2 -2; -6 -3; -6 -5; 4 -6]
+    inv_sqrt_xx_cov_0 = [
+        [1.155 0.0; 1.54 1.9245], [0.8944 0.0; 0.0 2.582],
+        [1.414 0.0; 0.0 2.0], [2.0 0.0; 0.0 2.0],
+        [1.581 0.0; 0.0 1.581], [1.0 0.0; 0.0 2.0],
+        [2.0 0.0; 0.0 1.0], [1.414 0.0; -0.970 1.213],
+        [1.0 0.0; 0.825 1.8334], [0.6325 0.0; 0.0 2.8284] ]
+    x_mean_ref = zeros(10,N_x)
+    inv_sqrt_xx_cov_ref = []
+    for im = 1:10
+        x_mean_ref[im,1:2] = x_mean_0[im,:]
+        x_mean_ref[im,3:N_x] .= im
+        inv_sqrt_xx_cov = ones(N_x,N_x)
+        inv_sqrt_xx_cov[1:2,1:2] =  inv_sqrt_xx_cov_0[im]
+        push!(inv_sqrt_xx_cov_ref, tril(inv_sqrt_xx_cov)) 
+    end
+    return x_w_ref, x_mean_ref, inv_sqrt_xx_cov_ref
 end
 
 function Gaussian_mixture_VI(func_dPhi, func_F, w0, μ0, Σ0; N_iter = 100, dt = 1.0e-3, Hessian_correct_GM=true)

@@ -123,7 +123,16 @@ end
    
 
 
-
+# compute expectaion of derivatives of Gaussian mixture density (e.g, ρ, ∇ρ, ∇²ρ) with respect to each mode
+# input : Gaussian mixture weights, means, xx_cov
+function compute_ρ_gm_moments(x_w, x_mean, xx_cov)
+    x_w = x_w / sum(x_w)
+    N_modes = size(x_mean,1)
+    ρ_gm_mean = x_mean' * x_w
+    ρ_gm_cov = sum(x_w[im]*xx_cov[im,:,:] for im =1:N_modes) + x_mean' * (x_mean .* x_w) - ρ_gm_mean * ρ_gm_mean'
+    return ρ_gm_mean, ρ_gm_cov
+end
+   
 
 ###### Plot function 
 
@@ -263,7 +272,29 @@ function posterior_2d(func, X, Y, func_type)
     return Z
 end
 
+function posterior_2d_moments(x_lim, y_lim, func_Phi; Nx = 1000, Ny = 1000)
 
+    x_min, x_max = x_lim 
+    y_min, y_max = y_lim
+
+    xx = LinRange(x_min, x_max, Nx)
+    yy = LinRange(y_min, y_max, Ny)
+
+    dx, dy = xx[2] - xx[1], yy[2] - yy[1]
+    X,Y = repeat(xx, 1, Ny), repeat(yy, 1, Nx)'
+    Z = posterior_2d(func_Phi, X, Y, "func_Phi")
+
+    posterior_mean, posterior_cov = zeros(2), zeros(2, 2)
+    posterior_mean[1] = sum(xx .* Z) *dx*dy
+    posterior_mean[2] = sum(yy' .* Z) *dx*dy
+    posterior_cov[1, 1] = sum((xx.*xx) .*Z) *dx*dy
+    posterior_cov[1, 2] = xx' * Z * yy *dx*dy
+    posterior_cov[2, 1] = posterior_cov[1, 2]
+    posterior_cov[2, 2] = sum((yy.*yy)' .*Z) *dx*dy
+
+    return posterior_mean, posterior_cov
+
+end
 
 function visualization_2d(ax; Nx=2000, Ny=2000, x_lim=[-4.0,4.0], y_lim=[-4.0,4.0], func_F = nothing, func_Phi = nothing, objs=nothing, label=nothing)
     

@@ -5,7 +5,7 @@ using LinearAlgebra
 using Statistics
 using DocStringExtensions
 
-include("../Derivative-Free-Variational-Inference/EstimateTstart.jl")
+include("./EstimateTstart.jl")
 include("./GMBBVI.jl")
 
 """
