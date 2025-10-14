@@ -136,7 +136,12 @@ function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_m
     xx_cov_n = copy(xx_cov)
     logx_w_n = copy(logx_w)
 
-    # update xx_cov_n and sqrt_xx_cov
+    # update x_mean_n 
+    for im =1:N_modes
+        x_mean_n[im,:] += -dts[im] * sqrt_xx_cov[im] * log_ratio_x_mean[im,:]
+    end
+
+    # update xx_cov_n, sqrt_xx_cov
     for im =1:N_modes
         sqrt_xx_cov_n    = sqrt_xx_cov[im] * (eigens[im].vectors .*  (exp.(-dts[im]*0.5*eigens[im].values))')
         xx_cov_n[im,:,:] = sqrt_xx_cov_n  * sqrt_xx_cov_n'
@@ -148,11 +153,7 @@ function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_m
         end
     end 
 
-    # update x_mean_n 
-    for im =1:N_modes
-        x_mean_n[im,:] += -dts[im] * sqrt_xx_cov[im] * log_ratio_x_mean[im,:]
-    end
-
+    
     # update logx_w_n
     logx_w_n += dts .* d_logx_w
 
