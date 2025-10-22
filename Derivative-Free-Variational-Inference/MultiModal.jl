@@ -20,7 +20,8 @@ function G(θ, arg, Gtype = "Gaussian")
         return [log( λ*(θ[2] - θ[1]^2)^2 + (1 - θ[1])^2 ); θ[1]; θ[2]; θ[3:end]-K*θ[1:2]]
     elseif Gtype == "Funnel"
         A = arg
-        return [θ[1]/3 + 3*(length(θ)-1)/2; A * θ[2:end] / exp(θ[1]/2)]
+        σ = 3.0
+        return [θ[1]/σ + σ*(length(θ)-1)/2; A * θ[2:end] / exp(θ[1]/2)]
     else
         print("Error in function G")
     end
@@ -59,8 +60,8 @@ function multimodal_moments(Gtype::String)
     if Gtype == "Circle"
         return ([0, 0], [0.5002314411516613 0; 0 0.5002314411516613])
     elseif Gtype == "Banana"
-        return ([0.9999999820951503, 10.999999610616223],
-        [10.0  20.0; 20.0  240])
+        return ([1.0, 11.0],
+        [10.0  20.0; 20.0  240.0])
     elseif Gtype == "Funnel"
         return ([0, 0], 
         [9.0 0; 0 exp(4.5)])
@@ -99,7 +100,7 @@ function Gaussian_mixture_args(;N_x::Int=2)
     inv_sqrt_xx_cov_ref = []
     for im = 1:10
         x_mean_ref[im,1:2] = x_mean_0[im,:]
-        x_mean_ref[im,3:N_x] .= im
+        x_mean_ref[im,3:N_x] .= im/2.0
         inv_sqrt_xx_cov = ones(N_x,N_x)
         inv_sqrt_xx_cov[1:2,1:2] =  inv_sqrt_xx_cov_0[im]
         push!(inv_sqrt_xx_cov_ref, tril(inv_sqrt_xx_cov)) 
