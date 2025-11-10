@@ -19,16 +19,16 @@ end
 function Gaussian_mixture_density(x_w::Array{FT,1}, x_mean::Array{FT,2}, inv_sqrt_xx_cov::Vector{LowerTriangular{FT, Matrix{FT}}}, x_p::Array{FT,2}) where {FT<:AbstractFloat}
     N_modes, N_x = size(x_mean)
     N_p, _ = size(x_p)
-    ρ = zeros(FT, N_p)
+    ρ = zeros(FT, N_p, N_modes)
 
-    for im in 1:N_modes
+    Threads.@threads for im in 1:N_modes
         x_p_demeaned = x_p .- x_mean[im,:]'            # Compute differences with respect to the mean for all points at once
         mahalanobis = vec(sum((inv_sqrt_xx_cov[im] * x_p_demeaned') .^ 2, dims=1))  # Vectorized Mahalanobis distance
         norm_const = det(inv_sqrt_xx_cov[im])  # Normalization constant
-        ρ .+= x_w[im] * norm_const * exp.(-0.5 * mahalanobis)  # Vectorized computation
+        ρ[:, im] = x_w[im] * norm_const * exp.(-0.5 * mahalanobis)  # Vectorized computation
     end
 
-    return ρ
+    return vec(sum(ρ, dims=2))
 end
 
 
