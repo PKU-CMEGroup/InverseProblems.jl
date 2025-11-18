@@ -126,7 +126,7 @@ function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_m
     eigens = [eigen(Symmetric(log_ratio_xx_mean[im,:,:])) for im = 1:N_modes]
     matrix_norm = [maximum(abs.(eigens[im].values)) for im = 1:N_modes]
     
-    dts = scheduler(iter, N_iter, scheduler_type = scheduler_type) * min.(dt_max,   dt_max./ (matrix_norm)) 
+    dts = min.(scheduler(iter, N_iter, scheduler_type = scheduler_type) * dt_max,   dt_max./ (matrix_norm)) 
     
     dts .= minimum(dts)
     
