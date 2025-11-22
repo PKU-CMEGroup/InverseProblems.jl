@@ -1,3 +1,5 @@
+using LinearAlgebra
+
 function G(θ, arg, Gtype = "Gaussian")
     K = ones(length(θ)-2,2)
     if Gtype == "Gaussian"
@@ -100,9 +102,12 @@ function Gaussian_mixture_args(;N_x::Int=2)
     inv_sqrt_xx_cov_ref = []
     for im = 1:10
         x_mean_ref[im,1:2] = x_mean_0[im,:]
-        x_mean_ref[im,3:N_x] .= im/2.0
-        inv_sqrt_xx_cov = ones(N_x,N_x)
-        inv_sqrt_xx_cov[1:2,1:2] =  inv_sqrt_xx_cov_0[im]
+        # x_mean_ref[im,3:N_x] .= im/2.0
+        # x_mean_ref[im,3:N_x] .= 0
+        x_mean_ref[im,3:N_x] .= (im-5)/(2*sqrt(N_x))
+        inv_sqrt_xx_cov = inv( Tridiagonal(-ones(N_x-1), 2*ones(N_x), zeros(N_x-1)) )
+        # inv_sqrt_xx_cov = ones(N_x, N_x)
+        inv_sqrt_xx_cov[1:2,1:2] .= inv_sqrt_xx_cov_0[im]
         push!(inv_sqrt_xx_cov_ref, tril(inv_sqrt_xx_cov)) 
     end
     return x_w_ref, x_mean_ref, inv_sqrt_xx_cov_ref
