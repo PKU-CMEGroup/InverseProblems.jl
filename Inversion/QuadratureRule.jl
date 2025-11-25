@@ -2,6 +2,7 @@ using LinearAlgebra
 using ForwardDiff
 using Random
 using Distributions
+using Sobol
 # quadrature points
 # C = √C √Cᵀ
 # xᵢ=m+√C cᵢ , here cᵢ ∈ Rᴺ
@@ -13,7 +14,16 @@ using Distributions
 # x₂ᵀ           =    mᵀ    +      c₂ᵀ             √Cᵀ
 # ⋮                  ⋮             ⋮
 # x_{N_ens}ᵀ         mᵀ           c_{N_ens}ᵀ  
-function generate_quadrature_rule(N_x, quadrature_type; c_weight=sqrt(N_x), N_ens = -1)
+mutable struct HybridQMCHandler
+    s::SobolSeq         
+    iter::Int           
+    switch_iter::Int    
+    N_ens::Int          
+    N_x::Int    
+    z_buffer::Matrix{Float64}
+end
+
+function generate_quadrature_rule(N_x, quadrature_type; c_weight=sqrt(N_x), N_ens = -1, switch_iter = -1)
     if quadrature_type == "mean_point"
         N_ens = 1
         c_weights    = zeros(N_x, N_ens)
@@ -21,6 +31,19 @@ function generate_quadrature_rule(N_x, quadrature_type; c_weight=sqrt(N_x), N_en
     elseif quadrature_type == "random_sampling"
         c_weights = nothing
         mean_weights =  ones(N_ens)/N_ens
+    elseif quadrature_type == "hybrid_qmc"
+        if N_ens == -1 || switch_iter == -1
+            error("For hybrid_qmc, N_ens and switch_iter must be provided!")
+        end
+        
+        s = SobolSeq(N_x)
+        skip(s, N_ens * N_x)
+        
+        z_buf = zeros(Float64, N_x, N_ens)
+        
+        c_weights = HybridQMCHandler(s, 0, switch_iter, N_ens, N_x, z_buf)
+        mean_weights = ones(N_ens)/N_ens
+        
     elseif  quadrature_type == "unscented_transform"
         N_ens = 2N_x+1
         c_weights = zeros(N_x, N_ens)
@@ -88,7 +111,6 @@ function compute_sqrt_matrix(C; type="Cholesky")
     elseif type == "SVD"
         U, D, _ = svd(Hermitian(C))
         sqrt_cov, inv_sqrt_cov = U*Diagonal(sqrt.(D)),  Diagonal(sqrt.(1.0./D))*U' 
-        
     else
         print("Type ", type, " for computing sqrt matrix has not implemented.")
     end
@@ -97,8 +119,32 @@ end
 
 function construct_ensemble(x_mean, sqrt_cov; c_weights = nothing, N_ens = 100)
 
-    
+    if isa(c_weights, HybridQMCHandler)
+        handler = c_weights
+        handler.iter += 1
+        
+        z = handler.z_buffer 
+        
+        if handler.iter <= handler.switch_iter
+            for i in 1:handler.N_ens
+                next!(handler.s, view(z, :, i)) 
+            end
+            @. z = quantile(Normal(), z)
+            xs = (sqrt_cov * z)' .+ x_mean'
+            return xs
+            
+        else
+            randn!(z) 
+            z_mean = mean(z, dims=2)
+            z .-= z_mean
+            L_emp = cholesky(z * z'/handler.N_ens + I*1e-12).L
+            z_corrected = L_emp \ z 
+            xs = ones(handler.N_ens)*x_mean' + (sqrt_cov * z_corrected)'
+            return xs
+        end
+    end
 
+            
     if c_weights === nothing
         N_x = size(x_mean,1)
         # generate random weights on the fly
@@ -183,7 +229,5 @@ function compute_expectation(V, ∇V, ∇²V, mean_weights)
 
     return Φᵣ_mean, ∇Φᵣ_mean, ∇²Φᵣ_mean
 end
-
-
 
 
