@@ -1,15 +1,14 @@
 #!/bin/bash
 
-#SBATCH --time=8:00:00 
-#SBATCH --ntasks=1
+#SBATCH --time=24:00:00 
+#SBATCH --ntasks=2
 #SBATCH --nodes=1
 #SBATCH -p C064M1024G
-#SBATCH -J "GMBBVI_Darcy"
-#SBATCH -o "GMBBVI_Darcy_%j.log"
+#SBATCH -J "par_Darcy"
+#SBATCH -o "par_Darcy%j.log"
 
-### reference run time:  [1+(0.03*N_iter*N_ens*N_modes)/3600] hours
 
-export JULIA_NUM_THREADS=1
+export JULIA_NUM_THREADS=2
 
 source /etc/profile.d/modules.sh
 
@@ -24,4 +23,4 @@ echo "Julia path: $(which julia)"
 echo "Julia version: $(julia --version)"
 echo "Running Julia with $JULIA_NUM_THREADS threads on $SLURM_NTASKS tasks."
 
-julia GMBBVI_Darcy.jl |& tee GMBBVI_Darcy.log
+julia par_Darcy.jl |& tee par_Darcy.log

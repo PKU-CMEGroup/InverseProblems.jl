@@ -200,3 +200,27 @@ function Gaussian_mixture_GMBBVI(func_Phi, x0_w, x0_mean, xx0_cov;
     
     return gmgdobj
 end
+
+
+function Gaussian_mixture_GMBBVI_par(func_Phi_par, x0_w, x0_mean, xx0_cov;
+         N_iter = 100, dt = 5.0e-1, N_ens = -1, scheduler_type = "stable_cos_decay", w_min = 1.0e-8)
+
+    _, N_x = size(x0_mean) 
+    if N_ens == -1 
+        N_ens = 2*N_x+1  
+    end
+
+    gmgdobj=GMBBVIObj(
+        x0_w, x0_mean, xx0_cov;
+        N_ens = N_ens,
+        w_min = w_min)
+
+
+    for i in 1:N_iter
+        if i%max(1, div(N_iter, 10)) == 0  @info "iter = ", i, " / ", N_iter  end
+        
+        update_ensemble!(gmgdobj, func_Phi_par, dt,  i,  N_iter, scheduler_type) 
+    end
+    
+    return gmgdobj
+end

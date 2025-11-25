@@ -1,25 +1,21 @@
 using MATLAB, MAT, Random, LinearAlgebra, Distributed
 include("../Inversion/GMBBVI.jl")
-include("../Inversion/AnnealingInitialize.jl")
 include("../Benchmark-Darcy/mean_ref.jl")
 
 
 script_dir = pwd()
 mat"cd($script_dir)"
 mat"addpath('../Benchmark-Darcy')"
-mat"load('../Benchmark-Darcy/precomputations.mat')"
+# mat"load('../Benchmark-Darcy/precomputations.mat')"
+# mat"which('par_func_Phi')"
 
 @info "MATLAB files loaded successfully"
 
-function func_Phi(x)
-    theta = exp.(x)
-    z = mat"forward_solver_($theta)"
-    log_prob = mat"log_probability_($x, $z)"
-    return -log_prob
+function func_Phi_par(x_ens)
+    return mxcall(:par_func_Phi, 1, x_ens)
 end
 
 function compute_exp_expectation(x_w, x_mean, xx_cov)
-
     N_modes, N_x = size(x_mean)
     x_w ./= sum(x_w)
     exp_mean = zeros(N_x)
@@ -27,9 +23,7 @@ function compute_exp_expectation(x_w, x_mean, xx_cov)
     Threads.@threads for i in 1:N_x
         exp_mean[i] = sum(x_w[im]*exp( x_mean[im,i]+xx_cov[im,i,i]/2) for im = 1:N_modes)
     end
-
     return exp_mean
-
 end
 
 
@@ -37,8 +31,8 @@ Random.seed!(123);
 
 N_x = 64 # dimension of Darcy problem (fixed)
 N_modes = 1  # number of modes in Gaussian mixture
-N_ens = 8*N_x 
-N_iter = 1000  
+N_ens = 6*N_x
+N_iter = 1000
 dt = 0.5
 
 
@@ -59,7 +53,7 @@ end
 x0_w_anneal, x0_mean_anneal, xx0_cov_anneal = x0_w, x0_mean, xx0_cov
 
 # run GMBBVI
-@time  obj = Gaussian_mixture_GMBBVI(func_Phi, x0_w_anneal, x0_mean_anneal, xx0_cov_anneal; N_iter = N_iter, dt = dt, N_ens = N_ens)
+@time  obj = Gaussian_mixture_GMBBVI_par(func_Phi_par, x0_w_anneal, x0_mean_anneal, xx0_cov_anneal; N_iter = N_iter, dt = dt, N_ens = N_ens)
 
 open("data.txt", "w") do io
     for iter = 0:N_iter
@@ -80,5 +74,4 @@ open("data.txt", "w") do io
     end
 end
 
-mat"quit"
 exit(0)
