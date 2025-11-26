@@ -98,3 +98,59 @@ function estimate_T_start_from_gradients(
     
     return T_start_est
 end
+
+
+
+"""
+    estimate_T_start_from_phi(
+        func_Phi, x0_w, x0_mean, x0_cov;
+        N_ens=100, alpha=0.1,
+        # 传入GMBBVI.jl中的辅助函数
+        construct_ensemble_func,
+        ensemble_GMBBVI_func,
+        gaussian_mixture_density_func
+    )
+
+根据能量项和熵项的梯度范数比来估算一个合理的初始温度 T_start。
+
+# Arguments
+- `func_Phi`: 你的势能函数 Φ(θ)。
+- `x0_w`, `x0_mean`, `x0_cov`: 用于定义初始近似分布 q(θ) 的GMM参数。
+- `N_ens`: 用于蒙特卡洛估计的样本数量。
+- `alpha`: 目标比例，即 ||能量梯度|| / ||熵梯度||。
+- `..._func`: 从外部传入 GMBBVI 代码中定义的辅助函数，以保持模块独立。
+
+# Returns
+- `T_start_est`: 建议的初始温度 T_start。
+"""
+function estimate_T_start_from_phi(
+    func_Phi, 
+    x0_w::Vector{FT}, 
+    x0_mean::Matrix{FT}, 
+    x0_cov::Array{FT, 3};
+    N_ens::IT=100,
+    construct_ensemble_func = construct_ensemble,
+    ensemble_GMBBVI_func::Function
+) where {FT<:AbstractFloat, IT<:Int}
+
+    # STEP 1: 设置初始的 GMM 状态
+    N_modes, N_x = size(x0_mean)
+    x_w = x0_w / sum(x0_w)
+    sqrt_xx_cov = [cholesky(Hermitian(x0_cov[im,:,:])).L for im = 1:N_modes]
+    inv_sqrt_xx_cov = [inv(L) for L in sqrt_xx_cov]
+
+    # STEP 2: 执行一次蒙特卡洛采样
+    x_p_normal = zeros(N_modes, N_ens, N_x)
+    x_p = zeros(N_modes, N_ens, N_x)
+    for im = 1:N_modes
+        x_p_normal[im,:,:] = construct_ensemble_func(zeros(N_x), Matrix(1.0I, N_x, N_x); c_weights=nothing, N_ens=N_ens)
+        x_p[im,:,:] = x_p_normal[im,:,:] * sqrt_xx_cov[im]' .+ x0_mean[im,:]'
+    end
+
+    # 预先计算 Phi_R 
+    Phi_R = ensemble_GMBBVI_func(x_p, func_Phi)
+    
+    T_start_est = (maximum(Phi_R) - minimum(Phi_R))
+    
+    return T_start_est
+end

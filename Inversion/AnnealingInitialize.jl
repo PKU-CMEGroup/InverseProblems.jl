@@ -99,11 +99,9 @@ end
     update_ensemble_annealing!
 
 """
-function update_ensemble_annealing!(gmgd::GMBBVIAnnealingObj{FT, IT}, ensemble_func::Function, dt_max::FT, iter::IT, N_iter::IT) where {FT<:AbstractFloat, IT<:Int}
+function update_ensemble_annealing!(gmgd::GMBBVIAnnealingObj{FT, IT}, ensemble_func::Function, dt_max::FT, iter::IT, N_iter::IT, scheduler_type::String = "stable_cos_decay") where {FT<:AbstractFloat, IT<:Int}
     annealing = gmgd.annealing
-    progress = iter / N_iter
-    annealing.current_T = annealing.T_end + 0.5 * (annealing.T_start - annealing.T_end) * (1 + cos(pi * progress)) # Cosine schedule
-    
+    annealing.current_T = scheduler(iter, N_iter; η_min = annealing.T_end, η_max = annealing.T_start, scheduler_type = scheduler_type)
     current_T = annealing.current_T
 
     gmgd.iter += 1
@@ -145,10 +143,11 @@ function update_ensemble_annealing!(gmgd::GMBBVIAnnealingObj{FT, IT}, ensemble_f
     eigens = [eigen(Symmetric(log_ratio_xx_mean[im,:,:])) for im = 1:N_modes]
     matrix_norm = [maximum(abs.(eigens[im].values)) for im = 1:N_modes]
 
-    # dts =  1 ./ (matrix_norm)
-    dts = min.(dt_max, 0.5 ./ (matrix_norm))
-    # dts = min.(dt_max, (0.2 + (1.0 - 0.2)*(1.0 + cos(iter/N_iter * pi))/2.0) ./ (matrix_norm))
-    
+    dts = min.(dt_max, dt_max ./ (matrix_norm))
+    # dts = min.(scheduler(iter, N_iter, scheduler_type = scheduler_type) * dt_max,   dt_max./ (matrix_norm)) 
+    # dts .= minimum(dts)
+
+
     x_mean_n = copy(x_mean) 
     xx_cov_n = copy(xx_cov)
     logx_w_n = copy(logx_w)
@@ -190,6 +189,7 @@ function initialize_with_annealing(
     dt::Float64 = 0.5,
     N_ens::Int = -1, 
     w_min::Float64 = 1.0e-8,
+    scheduler_type = "stable_cos_decay"
 )
 
     phi_max_val = 1.0e30
@@ -201,23 +201,29 @@ function initialize_with_annealing(
             return T(phi_max_val)
         end
     end
+
+    _, N_x = size(x0_mean) 
+
+    if N_ens == -1 
+        N_ens = 2*N_x+1  
+    end
     
     T_start =  estimate_T_start_from_gradients(
         func_Phi, 
         x0_w, 
         x0_mean, 
         xx0_cov;
-        N_ens=500,
+        N_ens=N_ens,
         alpha=0.1,
         construct_ensemble_func = construct_ensemble,
         ensemble_GMBBVI_func = ensemble_GMBBVI,
         gaussian_mixture_density_func = Gaussian_mixture_density
     )
+
     T_end = 1.0
-    _, N_x = size(x0_mean) 
-    if N_ens == -1 
-        N_ens = 2*N_x+1  
-    end
+    @info "initialize_with_annealing: T_start = ", T_start, "T_end = ", T_end, ", scheduler_type = ", scheduler_type
+    
+    
 
     # 使用我们为退火专门创建的 GMBBVIAnnealingObj
     gmgd_anneal_obj = GMBBVIAnnealingObj(
@@ -232,7 +238,7 @@ function initialize_with_annealing(
 
     i = 1
     while i <= N_iter
-        logx_w_n, x_mean_n, xx_cov_n, sqrt_xx_cov_n = update_ensemble_annealing!(gmgd_anneal_obj, func, dt, i, N_iter)
+        logx_w_n, x_mean_n, xx_cov_n, sqrt_xx_cov_n = update_ensemble_annealing!(gmgd_anneal_obj, func, dt, i, N_iter, scheduler_type)
         push!(gmgd_anneal_obj.logx_w, logx_w_n)
         push!(gmgd_anneal_obj.x_mean, x_mean_n)
         push!(gmgd_anneal_obj.xx_cov, xx_cov_n)
