@@ -29,8 +29,8 @@ mutable struct GMBBVIObj{FT<:AbstractFloat, IT<:Int}
     N_ens::IT
     "weight clipping"
     w_min::FT
-
-    q_rule_obj::Any
+    "quadrature rule object"
+    quadrature_rule_obj::Any
 end
 
 
@@ -40,8 +40,7 @@ function GMBBVIObj(
                 xx0_cov::Array{FT, 3};
                 # setup for Gaussian mixture part
                 N_ens::IT = 10,
-                use_hybrid_qmc::Bool = false,
-                qmc_ratio::Float64 = 0.9,
+                quadrature_type::String = "random_sampling",
                 total_iter::Int = 500,
                 w_min::FT = 1.0e-8) where {FT<:AbstractFloat, IT<:Int}
 
@@ -57,14 +56,13 @@ function GMBBVIObj(
     sqrt_xx_cov = [cholesky(xx0_cov[im,:,:]).L for im = 1:size(xx0_cov,1)]
 
     name = "GMBBVI"
-    quadrature_type_str = use_hybrid_qmc ? "hybrid_qmc" : "unscented_transform"
-    _, c_weights_obj, _ = generate_quadrature_rule(N_x, quadrature_type_str; 
+    _, quadrature_rule_obj, _ = generate_quadrature_rule(N_x, quadrature_type; 
                                                    N_ens=N_ens, 
-                                                   switch_iter=floor(Int, qmc_ratio * total_iter))
+                                                   switch_iter=floor(Int, 0.9 * total_iter))
     iter = 0
     GMBBVIObj(name,
             logx_w, x_mean, xx_cov, sqrt_xx_cov, N_modes, N_x,
-            iter, N_ens, w_min, c_weights_obj)
+            iter, N_ens, w_min, quadrature_rule_obj)
 end
 
 
@@ -102,7 +100,7 @@ function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_m
     x_p_normal = zeros(N_modes, N_ens, N_x)
     x_p = zeros(N_modes, N_ens, N_x)
     for im = 1:N_modes
-        x_p_normal[im,:,:] = construct_ensemble(zeros(N_x), I(N_x); c_weights = gmgd.q_rule_obj, N_ens = N_ens)
+        x_p_normal[im,:,:] = construct_ensemble(zeros(N_x), I(N_x); c_weights = gmgd.quadrature_rule_obj, N_ens = N_ens)
         x_p[im,:,:] = x_p_normal[im,:,:]*sqrt_xx_cov[im]' .+ x_mean[im,:]'
     end
 
@@ -187,7 +185,7 @@ end
 ##########
 function Gaussian_mixture_GMBBVI(func_Phi, x0_w, x0_mean, xx0_cov;
          N_iter = 100, dt = 5.0e-1, N_ens = -1, scheduler_type = "stable_cos_decay", w_min = 1.0e-8,
-         use_hybrid_qmc::Bool = false, qmc_ratio::Float64 = 0.9)
+         quadrature_type::String = "random_sampling")
 
     _, N_x = size(x0_mean) 
     if N_ens == -1 
@@ -196,8 +194,7 @@ function Gaussian_mixture_GMBBVI(func_Phi, x0_w, x0_mean, xx0_cov;
 
     gmgdobj = GMBBVIObj(x0_w, x0_mean, xx0_cov; 
                         N_ens = N_ens, w_min = w_min,
-                        use_hybrid_qmc = true, 
-                        qmc_ratio = qmc_ratio, 
+                        quadrature_type = quadrature_type,
                         total_iter = N_iter)
 
     func(x_ens) = ensemble_GMBBVI(x_ens, func_Phi) 
