@@ -58,7 +58,8 @@ function GMBBVIObj(
     name = "GMBBVI"
     _, quadrature_rule_obj, _ = generate_quadrature_rule(N_x, quadrature_type; 
                                                    N_ens=N_ens, 
-                                                   switch_iter=floor(Int, 0.9 * total_iter))
+                                                   switch_iter=floor(Int, 0.9 * total_iter),
+                                                   N_modes=N_modes)
     iter = 0
     GMBBVIObj(name,
             logx_w, x_mean, xx_cov, sqrt_xx_cov, N_modes, N_x,
@@ -134,7 +135,7 @@ function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_m
     
     dts = min.(scheduler(iter, N_iter, scheduler_type = scheduler_type) * dt_max,   dt_max./ (matrix_norm)) 
     
-    dts .= minimum(dts)
+    #dts .= minimum(dts)
     
     
     ########### update covariances, means, weights with different time steps

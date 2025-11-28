@@ -20,10 +20,12 @@ mutable struct HybridQMCHandler
     switch_iter::Int    
     N_ens::Int          
     N_x::Int    
-    z_buffer::Matrix{Float64}
+    N_modes::Int
+    call_count::Int
+    full_step_buffer::Matrix{Float64} 
 end
 
-function generate_quadrature_rule(N_x, quadrature_type; c_weight=sqrt(N_x), N_ens = -1, switch_iter = -1)
+function generate_quadrature_rule(N_x, quadrature_type; c_weight=sqrt(N_x), N_ens = -1, switch_iter = -1, N_modes = 1)
     if quadrature_type == "mean_point"
         N_ens = 1
         c_weights    = zeros(N_x, N_ens)
@@ -37,11 +39,11 @@ function generate_quadrature_rule(N_x, quadrature_type; c_weight=sqrt(N_x), N_en
         end
         
         s = SobolSeq(N_x)
-        skip(s, N_ens * N_x)
+        skip(s, N_ens * N_modes)
+                
+        full_buf = zeros(Float64, N_modes * N_ens, N_x)
         
-        z_buf = zeros(Float64, N_x, N_ens)
-        
-        c_weights = HybridQMCHandler(s, 0, switch_iter, N_ens, N_x, z_buf)
+        c_weights = HybridQMCHandler(s, 0, switch_iter, N_ens, N_x, N_modes, 0, full_buf)
         mean_weights = ones(N_ens)/N_ens
         
     elseif  quadrature_type == "unscented_transform"
@@ -73,9 +75,7 @@ function generate_quadrature_rule(N_x, quadrature_type; c_weight=sqrt(N_x), N_en
         N_ens = 2N_x*N_x + 1
         c_weights    = zeros(N_x, N_ens)
         mean_weights = ones(N_ens)
-
         mean_weights[1] = 2.0/(N_x + 2)
-
         for i = 1:N_x
             c_weights[i, 1+i]          =  sqrt(N_x+2)
             c_weights[i, 1+N_x+i]      =  -sqrt(N_x+2)
@@ -98,7 +98,6 @@ function generate_quadrature_rule(N_x, quadrature_type; c_weight=sqrt(N_x), N_en
 
     else 
         print("cubature tansform with quadrature type ", quadrature_type, " has not implemented.")
-
     end
 
     return N_ens, c_weights, mean_weights
@@ -121,35 +120,38 @@ function construct_ensemble(x_mean, sqrt_cov; c_weights = nothing, N_ens = 100)
 
     if isa(c_weights, HybridQMCHandler)
         handler = c_weights
-        handler.iter += 1
         
-        z = handler.z_buffer 
+        current_mode_idx = (handler.call_count % handler.N_modes) + 1
         
-        if handler.iter <= handler.switch_iter
-            for i in 1:handler.N_ens
-                next!(handler.s, view(z, :, i)) 
+        if current_mode_idx == 1
+            handler.iter += 1
+            if handler.iter <= handler.switch_iter
+                N_total = handler.N_modes * handler.N_ens
+                for i in 1:N_total
+                    next!(handler.s, view(handler.full_step_buffer, i, :))
+                end
+                @. handler.full_step_buffer = quantile(Normal(), handler.full_step_buffer)
             end
-            @. z = quantile(Normal(), z)
-            xs = (sqrt_cov * z)' .+ x_mean'
+        end
+
+        handler.call_count += 1
+                
+        if handler.iter <= handler.switch_iter
+            z_slice = handler.full_step_buffer[current_mode_idx:handler.N_modes:end, :]
+            
+            xs = ones(handler.N_ens) * x_mean' + z_slice * sqrt_cov'
             return xs
             
         else
-            randn!(z) 
-            z_mean = mean(z, dims=2)
-            z .-= z_mean
-            L_emp = cholesky(z * z'/handler.N_ens + I*1e-12).L
-            z_corrected = L_emp \ z 
-            xs = ones(handler.N_ens)*x_mean' + (sqrt_cov * z_corrected)'
-            return xs
+            c_weights = nothing 
         end
     end
 
-            
     if c_weights === nothing
         N_x = size(x_mean,1)
         # generate random weights on the fly
         c_weights = rand(Normal(0, 1), N_x, N_ens)
-        
+
         # enforce symmetry
         # if N_ens %2 == 0
         #     c_weights[:, div(N_ens, 2)+1:end] = -c_weights[:, 1:div(N_ens, 2)]
@@ -160,12 +162,11 @@ function construct_ensemble(x_mean, sqrt_cov; c_weights = nothing, N_ens = 100)
         # # enforce empirical covariance, no need
         # L = cholesky(c_weights * c_weights'/N_ens).L
         # c_weights = L\c_weights
-        
+
         c_mean = c_weights * ones(N_ens) / N_ens
         c_weights .-= c_mean
         L = cholesky(c_weights * c_weights'/N_ens).L
         c_weights = L\c_weights
-        
         xs = ones(N_ens)*x_mean' + (sqrt_cov * c_weights)'
     else
         N_ens = size(c_weights,2)
@@ -175,20 +176,15 @@ function construct_ensemble(x_mean, sqrt_cov; c_weights = nothing, N_ens = 100)
     return xs
 end
 
-
 # Derivative Free
 function compute_expectation_BIP(x_mean, inv_sqrt_cov, V, c_weight)
-
     N_x = length(x_mean)
     Φᵣ_mean, ∇Φᵣ_mean, ∇²Φᵣ_mean = 0.0, zeros(N_x), zeros(N_x, N_x)
-
-    
     α = c_weight
     N_ens, N_f = size(V)
     a = zeros(N_x, N_f)
     b = zeros(N_x, N_f)
     c = zeros(N_f)
-    
     c = V[1, :]
     for i = 1:N_x
         a[i, :] = (V[i+1, :] + V[i+N_x+1, :] - 2*V[1, :])/(2*α^2)
@@ -203,7 +199,7 @@ function compute_expectation_BIP(x_mean, inv_sqrt_cov, V, c_weight)
     # Ignore second order effect, mean point approximation
     # Φᵣ_mean = 1/2*(sum(ATA) + 2*tr(ATA) + 2*sum(ATc) + tr(BTB) + cTc)
     Φᵣ_mean = 1/2*(cTc)
-    
+
     # Ignore second order effect, mean point approximation
     # ∇Φᵣ_mean = inv_sqrt_cov'*(sum(BTA,dims=2) + 2*diag(BTA) + BTc)
     ∇Φᵣ_mean = inv_sqrt_cov'*(BTc)
@@ -211,14 +207,10 @@ function compute_expectation_BIP(x_mean, inv_sqrt_cov, V, c_weight)
     # Keep SPD part, with mean point approximation
     # ∇²Φᵣ_mean = inv_sqrt_cov'*( Diagonal(2*dropdims(sum(ATA, dims=2), dims=2) + 4*diag(ATA) + 2*ATc) + BTB)*inv_sqrt_cov
     ∇²Φᵣ_mean = inv_sqrt_cov'*( Diagonal(6*diag(ATA)) + BTB)*inv_sqrt_cov
-          
     return Φᵣ_mean, ∇Φᵣ_mean, ∇²Φᵣ_mean
 end
 
-
-
 function compute_expectation(V, ∇V, ∇²V, mean_weights)
-
     N_ens, N_x = size(∇V)
     Φᵣ_mean, ∇Φᵣ_mean, ∇²Φᵣ_mean = 0.0, zeros(N_x), zeros(N_x, N_x)
 
@@ -226,8 +218,5 @@ function compute_expectation(V, ∇V, ∇²V, mean_weights)
     Φᵣ_mean   = mean_weights' * V
     ∇Φᵣ_mean  = ∇V' * mean_weights
     ∇²Φᵣ_mean = sum(mean_weights[i] * ∇²V[i, :, :] for i = 1:length(mean_weights))
-
     return Φᵣ_mean, ∇Φᵣ_mean, ∇²Φᵣ_mean
 end
-
-
