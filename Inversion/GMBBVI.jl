@@ -143,7 +143,7 @@ function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_m
     xx_cov_n = copy(xx_cov)
     logx_w_n = copy(logx_w)
 
-# update x_mean_n 
+    # update x_mean_n 
     for im =1:N_modes
         x_mean_n[im,:] += -dts[im] * sqrt_xx_cov[im] * log_ratio_x_mean[im,:]
     end
