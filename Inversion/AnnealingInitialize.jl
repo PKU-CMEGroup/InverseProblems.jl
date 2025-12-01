@@ -189,6 +189,7 @@ function initialize_with_annealing(
     dt::Float64 = 0.5,
     N_ens::Int = -1, 
     w_min::Float64 = 1.0e-8,
+    alpha::Float64 = 0.1,
     scheduler_type = "stable_cos_decay"
 )
 
@@ -214,7 +215,7 @@ function initialize_with_annealing(
         x0_mean, 
         xx0_cov;
         N_ens=N_ens,
-        alpha=0.1,
+        alpha=alpha,
         construct_ensemble_func = construct_ensemble,
         ensemble_GMBBVI_func = ensemble_GMBBVI,
         gaussian_mixture_density_func = Gaussian_mixture_density
