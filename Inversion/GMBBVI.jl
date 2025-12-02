@@ -57,8 +57,7 @@ function GMBBVIObj(
 
     name = "GMBBVI"
     _, quadrature_rule_obj, _ = generate_quadrature_rule(N_x, quadrature_type; 
-                                                   N_ens=N_ens, 
-                                                   switch_iter=floor(Int, 0.9 * total_iter),
+                                                   N_ens=N_ens,
                                                    N_modes=N_modes)
     iter = 0
     GMBBVIObj(name,
