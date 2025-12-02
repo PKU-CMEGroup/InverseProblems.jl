@@ -25,7 +25,20 @@ mutable struct HybridQMCHandler
     full_step_buffer::Matrix{Float64} 
 end
 
-function generate_quadrature_rule(N_x, quadrature_type; c_weight=sqrt(N_x), N_ens = -1, switch_iter = -1, N_modes = 1)
+mutable struct AlternatingQMCHandler
+    s::SobolSeq         
+    iter::Int           
+    N_ens::Int          
+    N_x::Int    
+    N_modes::Int
+    call_count::Int
+    full_step_buffer::Matrix{Float64} 
+    sobol_steps::Int
+    random_steps::Int
+end
+
+function generate_quadrature_rule(N_x, quadrature_type; c_weight=sqrt(N_x), N_ens = -1, switch_iter = -1
+, N_modes = 1, sobol_steps = 1, random_steps = 5)
     if quadrature_type == "mean_point"
         N_ens = 1
         c_weights    = zeros(N_x, N_ens)
@@ -46,6 +59,16 @@ function generate_quadrature_rule(N_x, quadrature_type; c_weight=sqrt(N_x), N_en
         c_weights = HybridQMCHandler(s, 0, switch_iter, N_ens, N_x, N_modes, 0, full_buf)
         mean_weights = ones(N_ens)/N_ens
         
+    elseif quadrature_type == "alternating_qmc"
+        if N_ens == -1
+            error("For alternating_qmc, N_ens must be provided!")
+        end
+        s = SobolSeq(N_x)
+        skip(s, N_ens * N_modes)
+        full_buf = zeros(Float64, N_modes * N_ens, N_x)
+        c_weights = AlternatingQMCHandler(s, 0, N_ens, N_x, N_modes, 0, full_buf, sobol_steps, random_steps)
+        mean_weights = ones(N_ens)/N_ens
+
     elseif  quadrature_type == "unscented_transform"
         N_ens = 2N_x+1
         c_weights = zeros(N_x, N_ens)
@@ -144,6 +167,37 @@ function construct_ensemble(x_mean, sqrt_cov; c_weights = nothing, N_ens = 100)
             
         else
             c_weights = nothing 
+        end
+
+    elseif isa(c_weights, AlternatingQMCHandler)
+        handler = c_weights
+        
+        current_mode_idx = (handler.call_count % handler.N_modes) + 1
+        
+        cycle_length = handler.sobol_steps + handler.random_steps
+        
+        if current_mode_idx == 1
+            handler.iter += 1
+            in_sobol_phase = ((handler.iter - 1) % cycle_length) < handler.sobol_steps
+
+            if in_sobol_phase
+                N_total = handler.N_modes * handler.N_ens
+                for i in 1:N_total
+                    next!(handler.s, view(handler.full_step_buffer, i, :))
+                end
+                @. handler.full_step_buffer = quantile(Normal(), handler.full_step_buffer)
+            end
+        end
+
+        handler.call_count += 1
+        in_sobol_phase = ((handler.iter - 1) % cycle_length) < handler.sobol_steps
+        
+        if in_sobol_phase
+            z_slice = handler.full_step_buffer[current_mode_idx:handler.N_modes:end, :]
+            xs = ones(handler.N_ens) * x_mean' + z_slice * sqrt_cov'
+            return xs
+        else
+            c_weights = nothing
         end
     end
 
