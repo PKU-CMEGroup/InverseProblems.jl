@@ -134,7 +134,7 @@ function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_m
     
     dts = min.(scheduler(iter, N_iter, scheduler_type = scheduler_type) * dt_max,   dt_max./ (matrix_norm)) 
     
-    #dts .= minimum(dts)
+    dts .= minimum(dts)
     
     
     ########### update covariances, means, weights with different time steps

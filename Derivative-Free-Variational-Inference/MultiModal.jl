@@ -104,8 +104,8 @@ function Gaussian_mixture_args(;N_x::Int=2)
         x_mean_ref[im,1:2] = x_mean_0[im,:]
         # x_mean_ref[im,3:N_x] .= im/2.0
         # x_mean_ref[im,3:N_x] .= 0
-        x_mean_ref[im,3:N_x] .= (im-5)/(2*sqrt(N_x))
-        inv_sqrt_xx_cov = inv( Tridiagonal(-ones(N_x-1), 2*ones(N_x), zeros(N_x-1)) )
+        x_mean_ref[im,3:N_x] .= rand(Normal(0, 1), N_x-2) # 0 # (im-5)/(2*sqrt(N_x))
+        inv_sqrt_xx_cov = Matrix{Float64}(I, N_x, N_x) # inv( Tridiagonal(-ones(N_x-1), 2*ones(N_x), zeros(N_x-1)) )
         # inv_sqrt_xx_cov = ones(N_x, N_x)
         inv_sqrt_xx_cov[1:2,1:2] .= inv_sqrt_xx_cov_0[im]
         push!(inv_sqrt_xx_cov_ref, tril(inv_sqrt_xx_cov)) 
