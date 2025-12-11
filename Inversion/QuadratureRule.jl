@@ -137,13 +137,25 @@ function construct_ensemble(x_mean, sqrt_cov; c_weights = nothing, N_ens = 100)
             in_sobol_phase = ((handler.iter - 1) % cycle_length) < handler.sobol_steps
 
             if in_sobol_phase
+                # Reset Sobol sequence to get best quality points (RQMC)
+                handler.s = SobolSeq(handler.N_x)
+                
+                # Generate random shift for RQMC (Cranley-Patterson rotation)
+                random_shift = rand(handler.N_x)
+                
                 N_total = handler.N_modes * handler.N_ens
+                
+                # Temporary buffer for a single point
+                p = zeros(handler.N_x)
+                
                 #use next! to fill buffer
                 for i in 1:N_total
-                    next!(handler.s, view(handler.full_step_buffer, i, :))
+                    next!(handler.s, p)
+                    # Apply random shift
+                    p .= (p .+ random_shift) .% 1.0
+                    # Transform to Normal
+                    @. handler.full_step_buffer[i, :] = quantile(Normal(), p)
                 end
-                #transform uniform in [0,1] to N(0,I)
-                @. handler.full_step_buffer = quantile(Normal(), handler.full_step_buffer)
             end
         end
 
@@ -151,9 +163,11 @@ function construct_ensemble(x_mean, sqrt_cov; c_weights = nothing, N_ens = 100)
         in_sobol_phase = ((handler.iter - 1) % cycle_length) < handler.sobol_steps
         
         if in_sobol_phase
-            #from current_mode_idx, select one row after every N_modes rows
-            #compared to continuous selection, this way is better judged from outcome
-            z_slice = handler.full_step_buffer[current_mode_idx:handler.N_modes:end, :]
+            # Use contiguous slicing to preserve Sobol properties within each mode
+            start_idx = (current_mode_idx - 1) * handler.N_ens + 1
+            end_idx = current_mode_idx * handler.N_ens
+            z_slice = handler.full_step_buffer[start_idx:end_idx, :]
+            
             xs = ones(handler.N_ens) * x_mean' + z_slice * sqrt_cov'
             return xs
         else
@@ -173,9 +187,6 @@ function construct_ensemble(x_mean, sqrt_cov; c_weights = nothing, N_ens = 100)
         #     c_weights[:, 1] .= 0.0
         #     c_weights[:, div(N_ens, 2)+2:end] = -c_weights[:, 2:div(N_ens, 2)+1]
         # end
-        # # enforce empirical covariance, no need
-        # L = cholesky(c_weights * c_weights'/N_ens).L
-        # c_weights = L\c_weights
 
         c_mean = c_weights * ones(N_ens) / N_ens
         c_weights .-= c_mean
