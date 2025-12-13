@@ -1,7 +1,7 @@
-using MATLAB, MAT, Random, LinearAlgebra, Distributed, JLD2
+using MATLAB, MAT, Random, LinearAlgebra, Distributed, JLD2, DelimitedFiles
 include("../Inversion/GMBBVI.jl")
 include("../Inversion/Plot.jl")
-include("../Benchmark-Darcy/mean_ref.jl")
+mean_ref = vec(readdlm("../Benchmark-Darcy/mean_ref.txt"))
 
 script_dir = pwd()
 mat"cd($script_dir)"
