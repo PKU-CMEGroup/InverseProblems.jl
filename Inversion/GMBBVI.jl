@@ -17,8 +17,8 @@ mutable struct GMBBVIObj{FT<:AbstractFloat, IT<:Int}
     x_mean::Vector{Array{FT, 2}} 
     "a vector of arrays of size (N_modes x N_parameters x N_parameters) containing the modal covariances of the parameters"
     xx_cov::Vector{Array{FT, 3}}
-    "a vector of square root matrix for current time step of size (N_parameters x N_parameters)"
-    sqrt_xx_cov::Vector{Matrix{FT}}
+    "a vector of lower triangular square root matrix for current time step of size (N_parameters x N_parameters)"
+    sqrt_xx_cov::Vector{LowerTriangular{FT, Matrix{FT}}}
     "number of modes"
     N_modes::IT
     "size of x"
@@ -53,7 +53,7 @@ function GMBBVIObj(
     xx_cov = Array{FT,3}[]      # array of Array{FT, 2}'s
     push!(xx_cov, xx0_cov)      # insert parameters at end of array (in this case just 1st entry)
 
-    sqrt_xx_cov = [begin F=svd(xx0_cov[im,:,:]); F.U * Diagonal(sqrt.(F.S)) end for im = 1:size(xx0_cov,1)]
+    sqrt_xx_cov = [cholesky(xx0_cov[im,:,:]).L for im = 1:size(xx0_cov,1)]
 
     name = "GMBBVI"
     _, quadrature_rule_obj, _ = generate_quadrature_rule(N_x, quadrature_type; 
@@ -151,8 +151,7 @@ function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_m
     for im =1:N_modes
         sqrt_xx_cov_n    = sqrt_xx_cov[im] * (eigens[im].vectors .*  (exp.(-dts[im]*0.5*eigens[im].values))')
         xx_cov_n[im,:,:] = sqrt_xx_cov_n  * sqrt_xx_cov_n'
-        F = svd(xx_cov_n[im,:,:])
-        sqrt_xx_cov[im] .= F.U * Diagonal(sqrt.(F.S))
+        sqrt_xx_cov[im] .= cholesky(xx_cov_n[im,:,:]).L
         if !isposdef(Hermitian(xx_cov_n[im, :, :]))
             @show gmgd.iter
             @info "error! negative determinant for mode ", im,  x_mean[im, :], xx_cov[im, :, :], inv(xx_cov[im, :, :]), xx_cov_n[im, :, :]
