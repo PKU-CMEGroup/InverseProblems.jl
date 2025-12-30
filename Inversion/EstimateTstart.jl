@@ -3,8 +3,9 @@ using Statistics
 using Distributions 
 
 function _compute_gradient_components(
-    x_p_normal, log_ratio, N_modes, N_ens, N_x
+    x_p_normal, log_ratio, sqrt_xx_cov,
 )
+    N_modes, N_ens, N_x = size(x_p_normal)
     # 中心化 log_ratio 
     log_ratio_mean = mean(log_ratio, dims=2)
     log_ratio_demeaned = log_ratio .- log_ratio_mean
@@ -15,6 +16,7 @@ function _compute_gradient_components(
     
     for im = 1:N_modes
         log_ratio_x_mean[im,:] = log_ratio_demeaned[im, :]' * x_p_normal[im,:,:] / N_ens
+        log_ratio_x_mean[im,:] = sqrt_xx_cov[im]' * log_ratio_x_mean[im,:]
         # log_ratio_xx_mean[im,:,:] = x_p_normal[im,:,:]' * (x_p_normal[im,:,:] .* log_ratio_demeaned[im,:]) / N_ens
     end
 
@@ -83,10 +85,10 @@ function estimate_T_start_from_gradients(
     log_rhoa = reshape(log_rhoa_flat, N_modes, N_ens)
 
     # STEP 3: 计算能量项梯度的范数 ||∇E[-Φ]||
-    norm_energy_grad = _compute_gradient_components(x_p_normal, -Phi_R, N_modes, N_ens, N_x)
+    norm_energy_grad = _compute_gradient_components(x_p_normal, -Phi_R, sqrt_xx_cov)
 
     # STEP 4: 计算熵项梯度的范数 ||∇H(q)||
-    norm_entropy_grad = _compute_gradient_components(x_p_normal, -log_rhoa, N_modes, N_ens, N_x)
+    norm_entropy_grad = _compute_gradient_components(x_p_normal, -log_rhoa, sqrt_xx_cov)
 
     # STEP 5: 计算 T_start
     if norm_entropy_grad < 1e-9
