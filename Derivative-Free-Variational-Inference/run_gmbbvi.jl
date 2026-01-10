@@ -7,7 +7,7 @@ include("../Inversion/GMBBVI.jl")
 include("../Inversion/AnnealingInitialize.jl")
 include("./MultiModal.jl")
 
-output_dir = "data_gmbbvi_new"
+output_dir = "data_gmbbvi_new_new"
 if !isdir(output_dir)
     mkdir(output_dir)
 end
@@ -17,8 +17,9 @@ Random.seed!(123);
 dim_test = [2, 10, 50]
 n_trials = 10
 n_iter = 2000 
-dt = 0.5
+dt = 0.9
 n_modes = 40
+scheduler_type = "exponential_decay"
 
 # Grid for L1 (Still 2D for density map comparison)
 Nx, Ny = 200, 200
@@ -62,7 +63,7 @@ for (idx, N_x) in enumerate(dim_test)
         end
 
         result_obj = Gaussian_mixture_GMBBVI(func_Phi, x0_w, x0_mean, xx0_cov;
-            N_iter = n_iter, dt = dt, N_ens = N_ens)
+            N_iter = n_iter, dt = dt, N_ens = N_ens, scheduler_type = scheduler_type)
         
         err_mean_hist = zeros(n_iter + 1)
         err_cov_hist = zeros(n_iter + 1)
@@ -77,7 +78,6 @@ for (idx, N_x) in enumerate(dim_test)
 
             curr_mean, curr_cov = compute_ρ_gm_moments(x_w, x_mean, xx_cov)
             
-            # --- MODIFIED: Compute Error for Dimension 1 ONLY ---
             # Julia uses 1-based indexing. Dim 1 is index 1.
             err_mean_hist[iter+1] = abs(curr_mean[1] - posterior_mean[1])
             err_cov_hist[iter+1]  = abs(curr_cov[1, 1] - posterior_cov[1, 1]) / abs(posterior_cov[1, 1])
