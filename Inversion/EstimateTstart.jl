@@ -25,7 +25,8 @@ function _compute_gradient_components(
     flat_grad_mean = vec(log_ratio_x_mean)
     
     # 将所有梯度向量拼接在一起
-    total_flat_gradient = vcat(flat_grad_w, flat_grad_mean)
+    # total_flat_gradient = vcat(flat_grad_w, flat_grad_mean)
+    total_flat_gradient = flat_grad_mean
 
     return norm(total_flat_gradient)
 end
