@@ -35,6 +35,7 @@ Let's start! (⚠️ under construction)
       * [Wasserstein gradient flow](Lectures/WassersteinGradientFlow.ipynb)
       * [Affine invariant gradient flows](Lectures/AffineInvariance.ipynb)
       * [Derivative Free Gaussian Mixture Variational Inference](Lectures/DerivativeFreeVariationalInference.ipynb)
+      * [Gaussian Mixture Black-Box Variational Inference](Lectures/BlackBoxVariationalInference.ipynb)
     * Coupling ideas
       * [Filtering](Lectures/Filtering.ipynb)
          * [Kalman filters](Lectures/KalmanFilters.ipynb)
