@@ -1,3 +1,5 @@
+using LinearAlgebra
+
 function G(θ, arg, Gtype = "Gaussian")
     K = ones(length(θ)-2,2)
     if Gtype == "Gaussian"
@@ -18,6 +20,10 @@ function G(θ, arg, Gtype = "Gaussian")
     elseif Gtype == "Double_banana"
         λ = arg
         return [log( λ*(θ[2] - θ[1]^2)^2 + (1 - θ[1])^2 ); θ[1]; θ[2]; θ[3:end]-K*θ[1:2]]
+    elseif Gtype == "Funnel"
+        A = arg
+        σ = 3.0
+        return [θ[1]/σ + σ*(length(θ)-1)/2; A * θ[2:end] / exp(θ[1]/2)]
     else
         print("Error in function G")
     end
@@ -52,7 +58,60 @@ function dPhi(θ, args)
            -ForwardDiff.hessian(x -> logrho(x, args), θ)
 end
 
+function multimodal_moments(Gtype::String)
+    if Gtype == "Circle"
+        return ([0, 0], [0.5002314411516613 0; 0 0.5002314411516613])
+    elseif Gtype == "Banana"
+        return ([1.0, 11.0],
+        [10.0  20.0; 20.0  240.0])
+    elseif Gtype == "Funnel"
+        return ([0, 0], 
+        [9.0 0; 0 exp(4.5)])
+    elseif Gtype == "Gaussian_mixture"
+        return ([-1.205, -0.865],
+        [17.279671070293197 0.6809403064876811; 0.6809403064876809 15.33721856523279])
+    else
+        @error "Error in function G"
+    end
+end
 
+function log_Gaussian_mixture(x, args)
+    x_w, x_mean, inv_sqrt_x_cov = args
+    # C = L L.T
+    # C^-1 = L^-TL^-1
+    N_x = size(x_mean, 2)
+    ρ = 0
+    exponents = [-0.5*(x-x_mean[im,:])'*(inv_sqrt_x_cov[im]'*inv_sqrt_x_cov[im]*(x-x_mean[im,:])) for im =1:length(x_w)]
+    mexponent = maximum(exponents)
+    for im = 1:length(x_w)
+        ρ += x_w[im]*exp(exponents[im] - mexponent)*det(inv_sqrt_x_cov[im])
+    end
+    return  log(ρ) + mexponent - N_x/2*log(2*π)
+end
+
+function Gaussian_mixture_args(;N_x::Int=2)
+    x_w_ref = [0.12, 0.05, 0.1, 0.06, 0.12, 0.08, 0.08, 0.12, 0.12, 0.15]
+    x_mean_0 = [-5.0 5.0; 4.0 6.0; 4.0 3.0; -0.25 0.75; 0.75 -0.75; -3.5 0; -2 -2; -6 -3; -6 -5; 4 -6]
+    inv_sqrt_xx_cov_0 = [
+        [1.155 0.0; 1.54 1.9245], [0.8944 0.0; 0.0 2.582],
+        [1.414 0.0; 0.0 2.0], [2.0 0.0; 0.0 2.0],
+        [1.581 0.0; 0.0 1.581], [1.0 0.0; 0.0 2.0],
+        [2.0 0.0; 0.0 1.0], [1.414 0.0; -0.970 1.213],
+        [1.0 0.0; 0.825 1.8334], [0.6325 0.0; 0.0 2.8284] ]
+    x_mean_ref = zeros(10,N_x)
+    inv_sqrt_xx_cov_ref = []
+    for im = 1:10
+        x_mean_ref[im,1:2] = x_mean_0[im,:]
+        # x_mean_ref[im,3:N_x] .= im/2.0
+        # x_mean_ref[im,3:N_x] .= 0
+        x_mean_ref[im,3:N_x] .= rand(Normal(0, 1), N_x-2) # 0 # (im-5)/(2*sqrt(N_x))
+        inv_sqrt_xx_cov = Matrix{Float64}(I, N_x, N_x) # inv( Tridiagonal(-ones(N_x-1), 2*ones(N_x), zeros(N_x-1)) )
+        # inv_sqrt_xx_cov = ones(N_x, N_x)
+        inv_sqrt_xx_cov[1:2,1:2] .= inv_sqrt_xx_cov_0[im]
+        push!(inv_sqrt_xx_cov_ref, tril(inv_sqrt_xx_cov)) 
+    end
+    return x_w_ref, x_mean_ref, inv_sqrt_xx_cov_ref
+end
 
 function Gaussian_mixture_VI(func_dPhi, func_F, w0, μ0, Σ0; N_iter = 100, dt = 1.0e-3, Hessian_correct_GM=true)
 

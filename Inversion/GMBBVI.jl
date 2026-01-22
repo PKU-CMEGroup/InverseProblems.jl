@@ -29,6 +29,8 @@ mutable struct GMBBVIObj{FT<:AbstractFloat, IT<:Int}
     N_ens::IT
     "weight clipping"
     w_min::FT
+    "quadrature rule object"
+    quadrature_rule_obj::Any
 end
 
 
@@ -38,6 +40,8 @@ function GMBBVIObj(
                 xx0_cov::Array{FT, 3};
                 # setup for Gaussian mixture part
                 N_ens::IT = 10,
+                quadrature_type::String = "random_sampling",
+                total_iter::Int = 500,
                 w_min::FT = 1.0e-8) where {FT<:AbstractFloat, IT<:Int}
 
     N_modes, N_x = size(x0_mean)
@@ -52,11 +56,13 @@ function GMBBVIObj(
     sqrt_xx_cov = [cholesky(xx0_cov[im,:,:]).L for im = 1:size(xx0_cov,1)]
 
     name = "GMBBVI"
-
+    _, quadrature_rule_obj, _ = generate_quadrature_rule(N_x, quadrature_type; 
+                                                   N_ens=N_ens,
+                                                   N_modes=N_modes)
     iter = 0
     GMBBVIObj(name,
             logx_w, x_mean, xx_cov, sqrt_xx_cov, N_modes, N_x,
-            iter, N_ens, w_min)
+            iter, N_ens, w_min, quadrature_rule_obj)
 end
 
 
@@ -74,7 +80,7 @@ function ensemble_GMBBVI(x_ens, forward)
 end
 
 
-function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_max::FT, iter::IT, N_iter::IT) where {FT<:AbstractFloat, IT<:Int} #从某一步到下一步的步骤
+function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_max::FT, iter::IT, N_iter::IT, scheduler_type::String) where {FT<:AbstractFloat, IT<:Int} #从某一步到下一步的步骤
     gmgd.iter += 1
     N_x,  N_modes = gmgd.N_x, gmgd.N_modes
 
@@ -94,7 +100,7 @@ function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_m
     x_p_normal = zeros(N_modes, N_ens, N_x)
     x_p = zeros(N_modes, N_ens, N_x)
     for im = 1:N_modes
-        x_p_normal[im,:,:] = construct_ensemble(zeros(N_x), I(N_x); c_weights = nothing, N_ens = N_ens)
+        x_p_normal[im,:,:] = construct_ensemble(zeros(N_x), I(N_x); c_weights = gmgd.quadrature_rule_obj, N_ens = N_ens)
         x_p[im,:,:] = x_p_normal[im,:,:]*sqrt_xx_cov[im]' .+ x_mean[im,:]'
     end
 
@@ -126,9 +132,7 @@ function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_m
     eigens = [eigen(Symmetric(log_ratio_xx_mean[im,:,:])) for im = 1:N_modes]
     matrix_norm = [maximum(abs.(eigens[im].values)) for im = 1:N_modes]
     
-    # set an upper bound dt_max, with cos annealing
-    # dts = cos_annealing(iter, N_iter, 0.1, 1.0) * min.(dt_max,   dt_max ./ (matrix_norm)) # keep the matrix postive definite, avoid too large cov update.
-    dts = stable_cos_decay(iter, N_iter, 0.1, 1.0; N_decay = 0.5*N_iter) * min.(dt_max,   dt_max./ (matrix_norm)) # keep the matrix postive definite, avoid too large cov update.
+    dts = min.(scheduler(iter, N_iter, scheduler_type = scheduler_type) * dt_max,   dt_max./ (matrix_norm)) 
     
     dts .= minimum(dts)
     
@@ -138,7 +142,12 @@ function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_m
     xx_cov_n = copy(xx_cov)
     logx_w_n = copy(logx_w)
 
-    # update xx_cov_n and sqrt_xx_cov
+    # update x_mean_n 
+    for im =1:N_modes
+        x_mean_n[im,:] += -dts[im] * sqrt_xx_cov[im] * log_ratio_x_mean[im,:]
+    end
+
+    # update xx_cov_n, sqrt_xx_cov
     for im =1:N_modes
         sqrt_xx_cov_n    = sqrt_xx_cov[im] * (eigens[im].vectors .*  (exp.(-dts[im]*0.5*eigens[im].values))')
         xx_cov_n[im,:,:] = sqrt_xx_cov_n  * sqrt_xx_cov_n'
@@ -149,11 +158,7 @@ function update_ensemble!(gmgd::GMBBVIObj{FT, IT}, ensemble_func::Function, dt_m
             @assert(isposdef(xx_cov_n[im, :, :]))
         end
     end 
-
-    # update x_mean_n 
-    for im =1:N_modes
-        x_mean_n[im,:] += -dts[im] * sqrt_xx_cov[im] * log_ratio_x_mean[im,:]
-    end
+    
 
     # update logx_w_n
     logx_w_n += dts .* d_logx_w
@@ -179,7 +184,33 @@ end
 """ func_Phi: the potential function, i.e the posterior is proportional to exp( - func_Phi )"""
 ##########
 function Gaussian_mixture_GMBBVI(func_Phi, x0_w, x0_mean, xx0_cov;
-         N_iter = 100, dt = 5.0e-1, N_ens = -1, w_min = 1.0e-8)
+         N_iter = 100, dt = 5.0e-1, N_ens = -1, scheduler_type = "stable_cos_decay", w_min = 1.0e-8,
+         quadrature_type::String = "random_sampling")
+
+    _, N_x = size(x0_mean) 
+    if N_ens == -1 
+        N_ens = 2*N_x+1  
+    end
+
+    gmgdobj = GMBBVIObj(x0_w, x0_mean, xx0_cov; 
+                        N_ens = N_ens, w_min = w_min,
+                        quadrature_type = quadrature_type,
+                        total_iter = N_iter)
+
+    func(x_ens) = ensemble_GMBBVI(x_ens, func_Phi) 
+
+    for i in 1:N_iter
+        if i%max(1, div(N_iter, 10)) == 0  @info "iter = ", i, " / ", N_iter  end
+        
+        update_ensemble!(gmgdobj, func, dt,  i,  N_iter, scheduler_type) 
+    end
+    
+    return gmgdobj
+end
+
+
+function Gaussian_mixture_GMBBVI_par(func_Phi_par, x0_w, x0_mean, xx0_cov;
+         N_iter = 100, dt = 5.0e-1, N_ens = -1, scheduler_type = "stable_cos_decay", w_min = 1.0e-8)
 
     _, N_x = size(x0_mean) 
     if N_ens == -1 
@@ -191,12 +222,11 @@ function Gaussian_mixture_GMBBVI(func_Phi, x0_w, x0_mean, xx0_cov;
         N_ens = N_ens,
         w_min = w_min)
 
-    func(x_ens) = ensemble_GMBBVI(x_ens, func_Phi) 
 
     for i in 1:N_iter
         if i%max(1, div(N_iter, 10)) == 0  @info "iter = ", i, " / ", N_iter  end
         
-        update_ensemble!(gmgdobj, func, dt,  i,  N_iter) 
+        update_ensemble!(gmgdobj, func_Phi_par, dt,  i,  N_iter, scheduler_type) 
     end
     
     return gmgdobj
