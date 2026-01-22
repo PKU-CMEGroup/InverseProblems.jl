@@ -121,14 +121,14 @@ N_θ = 32
 darcy = Setup_Param(N, L, N_KL, obs_ΔNx, obs_ΔNy, N_θ, d, τ, σ_0; seed = seed)
 
 y_noiseless = obs_with_refined_mesh(N, L, N_KL, obs_ΔNx, obs_ΔNy, N_θ, d, τ, σ_0, seed; refine_factor = 3)
-@save "Darcy-2D-truth.jld2" darcy y_noiseless
+# @save "Darcy-2D-truth.jld2" darcy y_noiseless
 
 @info "Darcy Problem with N=", N, "N_KL=", N_KL
 @info "length of y_noiseless: ", length(y_noiseless)
 @info "number of observation points: ", (1+div(length(darcy.x_locs),2))*length(darcy.y_locs)
 
 
-# @load "Darcy-2D-truth.jld2"  darcy y_noiseless
+@load "Darcy-2D-truth.jld2"  darcy y_noiseless
     
     
 
@@ -136,7 +136,7 @@ y_noiseless = obs_with_refined_mesh(N, L, N_KL, obs_ΔNx, obs_ΔNy, N_θ, d, τ,
 # GMBBVI initialization
 N_iter = 500
 N_y = length(y_noiseless)
-σ_η = 0.1
+σ_η = 0.25
 Σ_η = σ_η^2 * Array(Diagonal(fill(1.0, N_y)))
 Random.seed!(123);
 y = y_noiseless + rand(Normal(0, σ_η), N_y)
@@ -169,27 +169,22 @@ dt = 0.9
 func_args = (y, μ_0, σ_η, σ_0)
 func_F(x) = darcy_F(darcy, func_args, x)
 func_Phi(x) = 0.5 * norm(darcy_F(darcy, func_args, x))^2
-N_ens = 6*N_θ
+N_ens = 4*N_θ
 
 
-θ0_w_anneal, θ0_mean_anneal, θθ0_cov_anneal = initialize_with_annealing(
-    func_Phi,
-    θ0_w, θ0_mean, θθ0_cov;
-    N_ens = N_ens)
-
-gmgdobj = Gaussian_mixture_GMBBVI(
-        func_Phi,
-        θ0_w_anneal, θ0_mean_anneal, θθ0_cov_anneal;
-        N_iter = N_iter,
-        dt = dt,
-        N_ens = N_ens,
-        scheduler_type = "stable_cos_decay",
-        quadrature_type = "random_sampling"
-       ) 
-@save "gmgdobj-Darcy.jld2" gmgdobj
+# gmgdobj = Gaussian_mixture_GMBBVI(
+#         func_Phi,
+#         θ0_w, θ0_mean, θθ0_cov;
+#         N_iter = N_iter,
+#         dt = dt,
+#         N_ens = N_ens,
+#         scheduler_type = "stable_cos_decay",
+#         quadrature_type = "random_sampling"
+#        ) 
+# @save "gmgdobj-Darcy.jld2" gmgdobj
 
 
-# gmgdobj = load("gmgdobj-Darcy.jld2")["gmgdobj"]
+gmgdobj = load("gmgdobj-Darcy.jld2")["gmgdobj"]
 
 
 fig, (ax1, ax2, ax3, ax4) = PyPlot.subplots(ncols=4, figsize=(20,5))
@@ -228,28 +223,28 @@ for m = 1:N_modes
 end
 
 linestyles = ["o"; "x"; "s"; "*"; "^"; "v"; "<"; ">"]
-markevery = 5
+markevery = 20
 for m = 1: N_modes
     if mark_truth[m] == true
-        label = "mode "*string(m)*" (Truth)"
+        label = "Mode "*string(m)*" (truth)"
     else
-        label = "mode "*string(m)*" (mirrored)"
+        label = "Mode "*string(m)*" (mirrored)"
     end
     ax1.plot(ites, errors[1, :, m], marker=linestyles[m], color = "C"*string(m), fillstyle="none", markevery=markevery, label= label)
 end
 ax1.set_xlabel("Iterations")
-ax1.set_ylabel(L"Rel. error of \log\kappa(x)")
+ax1.set_ylabel("Rel. error of log a(x)")
 ax1.legend()
 
 for m = 1: N_modes
-    ax2.semilogy(ites, errors[2, :, m], marker=linestyles[m], color = "C"*string(m), fillstyle="none", markevery=markevery, label= "mode "*string(m))
+    ax2.semilogy(ites, errors[2, :, m], marker=linestyles[m], color = "C"*string(m), fillstyle="none", markevery=markevery, label= "Mode "*string(m))
 end
 ax2.set_xlabel("Iterations")
 ax2.set_ylabel(L"\Phi_R")
 ax2.legend()
 
 for m = 1: N_modes
-    ax3.plot(ites, errors[3, :, m], marker=linestyles[m], color = "C"*string(m), fillstyle="none", markevery=markevery, label= "mode "*string(m))
+    ax3.plot(ites, errors[3, :, m], marker=linestyles[m], color = "C"*string(m), fillstyle="none", markevery=markevery, label= "Mode "*string(m))
 end
 ax3.set_xlabel("Iterations")
 ax3.set_ylabel("Frobenius norm of covariance")
@@ -258,7 +253,7 @@ ax3.legend()
 
 x_w = exp.(hcat(gmgdobj.logx_w...))
 for m = 1: N_modes
-    ax4.plot(ites, x_w[m, 1:N_iter], marker=linestyles[m], color = "C"*string(m), fillstyle="none", markevery=markevery, label= "mode "*string(m))
+    ax4.plot(ites, x_w[m, 1:N_iter], marker=linestyles[m], color = "C"*string(m), fillstyle="none", markevery=markevery, label= "Mode "*string(m))
 end
 ax4.set_xlabel("Iterations")
 ax4.set_ylabel("Weights")
