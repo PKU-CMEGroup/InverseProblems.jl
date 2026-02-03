@@ -34,8 +34,8 @@ Let's start! (⚠️ under construction)
       * [Stein variational inference](Lectures/SteinVariationalInference.ipynb)
       * [Wasserstein gradient flow](Lectures/WassersteinGradientFlow.ipynb)
       * [Affine invariant gradient flows](Lectures/AffineInvariance.ipynb)
-      * [Derivative Free Gaussian Mixture Variational Inference](Lectures/DerivativeFreeVariationalInference.ipynb)
-      * [Gaussian Mixture Black-Box Variational Inference](Lectures/BlackBoxVariationalInference.ipynb)
+      * [Gaussian Mixture Variational Inference I](Lectures/DerivativeFreeVariationalInference.ipynb)
+      * [Gaussian Mixture Variational Inference II](Lectures/BlackBoxVariationalInference.ipynb)
     * Coupling ideas
       * [Filtering](Lectures/Filtering.ipynb)
          * [Kalman filters](Lectures/KalmanFilters.ipynb)
@@ -99,4 +99,6 @@ and Affine Invariance](https://arxiv.org/pdf/2302.11024.pdf)."
 
 6. Yifan Chen, Daniel Zhengyu Huang, Jiaoyang Huang, Sebastian Reich, and Andrew M. Stuart. "[Efficient, Multimodal, and Derivative-Free Bayesian Inference With Fisher-Rao Gradient Flows](https://arxiv.org/pdf/2406.17263)." 
 
-7. Baojun Che, Yifan Chen, Zhenghao Huan, Daniel Zhengyu Huang, Weijie Wang. "[Stable Derivative Free Gaussian Mixture Variational Inference for Bayesian Inverse Problems](https://arxiv.org/pdf/2501.04259)." 
+7. Baojun Che, Yifan Chen, Zhenghao Huan, Daniel Zhengyu Huang, Weijie Wang. "[Stable Derivative Free Gaussian Mixture Variational Inference for Bayesian Inverse Problems](https://arxiv.org/pdf/2501.04259)."
+
+8. Baojun Che, Yifan Chen, Daniel Zhengyu Huang, Xinying Mao, Weijie Wang. "[Adaptive Exponential Integration for Stable Gaussian Mixture Black-Box Variational Inference](https://arxiv.org/pdf/2601.14855)." 
