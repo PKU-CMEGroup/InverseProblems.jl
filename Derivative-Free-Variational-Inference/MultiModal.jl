@@ -70,6 +70,12 @@ function multimodal_moments(Gtype::String)
     elseif Gtype == "Gaussian_mixture"
         return ([-1.205, -0.865],
         [17.279671070293197 0.6809403064876811; 0.6809403064876809 15.33721856523279])
+    elseif Gtype == "Four_modes"
+        return ([0.8915584226146035, 2.923489114262216e-17], 
+        [1.5360226400642065 -1.0043757436650212e-16; -1.0043757436650212e-16 1.5360226400642039])
+    elseif Gtype == "Gaussian"
+        return ([-1.0, 1.0],
+        [50.0  -3.0; -3.0  2.0])
     else
         @error "Error in function G"
     end
