@@ -112,7 +112,7 @@ end
 
 seed = 111
 N, L = 81, 1.0
-obs_ΔNx, obs_ΔNy = 5, 5
+obs_ΔNx, obs_ΔNy = 10, 10
 d = 2.0
 τ = 3.0
 N_KL = 32
@@ -121,14 +121,14 @@ N_θ = 32
 darcy = Setup_Param(N, L, N_KL, obs_ΔNx, obs_ΔNy, N_θ, d, τ, σ_0; seed = seed)
 
 y_noiseless = obs_with_refined_mesh(N, L, N_KL, obs_ΔNx, obs_ΔNy, N_θ, d, τ, σ_0, seed; refine_factor = 3)
-# @save "Darcy-2D-truth.jld2" darcy y_noiseless
+@save "Darcy-2D-truth.jld2" darcy y_noiseless
 
 @info "Darcy Problem with N=", N, "N_KL=", N_KL
 @info "length of y_noiseless: ", length(y_noiseless)
 @info "number of observation points: ", (1+div(length(darcy.x_locs),2))*length(darcy.y_locs)
 
 
-@load "Darcy-2D-truth.jld2"  darcy y_noiseless
+# @load "Darcy-2D-truth.jld2"  darcy y_noiseless
     
     
 
@@ -172,19 +172,19 @@ func_Phi(x) = 0.5 * norm(darcy_F(darcy, func_args, x))^2
 N_ens = 4*N_θ
 
 
-# gmgdobj = Gaussian_mixture_GMBBVI(
-#         func_Phi,
-#         θ0_w, θ0_mean, θθ0_cov;
-#         N_iter = N_iter,
-#         dt = dt,
-#         N_ens = N_ens,
-#         scheduler_type = "stable_cos_decay",
-#         quadrature_type = "random_sampling"
-#        ) 
-# @save "gmgdobj-Darcy.jld2" gmgdobj
+gmgdobj = Gaussian_mixture_GMBBVI(
+        func_Phi,
+        θ0_w, θ0_mean, θθ0_cov;
+        N_iter = N_iter,
+        dt = dt,
+        N_ens = N_ens,
+        scheduler_type = "stable_cos_decay",
+        quadrature_type = "random_sampling"
+       ) 
+@save "gmgdobj-Darcy.jld2" gmgdobj
 
 
-gmgdobj = load("gmgdobj-Darcy.jld2")["gmgdobj"]
+# gmgdobj = load("gmgdobj-Darcy.jld2")["gmgdobj"]
 
 
 fig, (ax1, ax2, ax3, ax4) = PyPlot.subplots(ncols=4, figsize=(20,5))
