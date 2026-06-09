@@ -197,6 +197,7 @@ function Setup_Param(num_fourier::IT,  nθ::IT,
     num_spherical = num_fourier + 1
     nλ = 2nθ
     N_θ = trunc_N^2 + 2*trunc_N
+    nobs = size(obs_coord, 1)
     obs_time = div(end_time, n_obs_frames)
     
     
