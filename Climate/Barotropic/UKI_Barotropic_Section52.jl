@@ -38,6 +38,25 @@ function barotropic_u_ensemble(sparam::Setup_Param, tau_ens::AbstractMatrix)
     return g_ens
 end
 
+function barotropic_u_prior_ensemble(sparam::Setup_Param, tau_ens::AbstractMatrix)
+    g_data = barotropic_u_ensemble(sparam, tau_ens)
+    n_ens, n_param = size(tau_ens)
+    g_ens = zeros(Float64, n_ens, sparam.N_y + n_param)
+    g_ens[:, 1:sparam.N_y] .= g_data
+    g_ens[:, sparam.N_y+1:end] .= tau_ens
+
+    return g_ens
+end
+
+function augment_observations_with_prior(y_obs, obs_cov, prior_mean, prior_cov)
+    y_aug = vcat(y_obs, prior_mean)
+    n_param = length(prior_mean)
+    obs_cov_aug = zeros(Float64, length(y_obs) + n_param, length(y_obs) + n_param)
+    obs_cov_aug[1:length(y_obs), 1:length(y_obs)] .= obs_cov
+    obs_cov_aug[length(y_obs)+1:end, length(y_obs)+1:end] .= prior_cov
+    return y_aug, obs_cov_aug
+end
+
 function build_section52_problem(;
     num_fourier::Int=85,
     nlat::Int=256,
@@ -225,11 +244,13 @@ function run_section52_uki(;
     trunc_N::Int=7,
     n_iter::Int=20,
     alpha_reg::Float64=1.0,
-    uki_dt::Float64=1.0,
-    update_freq::Int=0,
+    uki_dt::Float64=0.5,
+    update_freq::Int=1,
     noise_level::Float64=0.05,
     noise_seed::Int=123,
     obs_seed::Int=42,
+    prior_mean::Union{Vector{Float64},Nothing}=nothing,
+    prior_cov::Union{Matrix{Float64},Nothing}=nothing,
     perturbation_wavenumber::Float64=4.0,
     perturbation_amplitude::Float64=8.0e-5,
     output_file::String=joinpath(@__DIR__, "Figs", "UKI_Barotropic_Section52.jls"),
@@ -256,24 +277,30 @@ function run_section52_uki(;
     )
 
     n_param = sparam.N_θ
-    tau0_mean = zeros(Float64, n_param)
-    tau0_cov = Matrix{Float64}(I, n_param, n_param)
+    prior_mean_vec = isnothing(prior_mean) ? zeros(Float64, n_param) : copy(prior_mean)
+    prior_cov_mat = isnothing(prior_cov) ? Matrix{Float64}(I, n_param, n_param) : copy(prior_cov)
+    @assert length(prior_mean_vec) == n_param "prior_mean must have length $(n_param)."
+    @assert size(prior_cov_mat) == (n_param, n_param) "prior_cov must be $(n_param) x $(n_param)."
+
+    tau0_mean = copy(prior_mean_vec)
+    tau0_cov = copy(prior_cov_mat)
+    y_uki, obs_cov_uki = augment_observations_with_prior(y_obs, obs_cov, prior_mean_vec, prior_cov_mat)
 
     ukiobj = UKIObj(
         ["tau"],
         tau0_mean,
         tau0_cov,
-        y_obs,
-        obs_cov,
+        y_uki,
+        obs_cov_uki,
         alpha_reg,
         update_freq;
         Δt=uki_dt,
         unscented_transform="original-2n+1",
-        prior_mean=zeros(Float64, n_param),
-        prior_cov=tau0_cov,
+        prior_mean=prior_mean_vec,
+        prior_cov=prior_cov_mat,
     )
 
-    ens_func(tau_ens) = barotropic_u_ensemble(sparam, tau_ens)
+    ens_func(tau_ens) = barotropic_u_prior_ensemble(sparam, tau_ens)
 
     for iter in 1:n_iter
         @info "UKI iteration" iter n_iter
@@ -282,13 +309,14 @@ function run_section52_uki(;
 
     tau_history = ukiobj.θ_mean[2:end]
     vorticity_errors = section52_vorticity_errors(sparam, tau_history, reconstruct_initial_vorticity)
-    observation_errors = section52_observation_errors(y_obs, ukiobj.y_pred)
+    data_y_pred = [y_pred[1:length(y_obs)] for y_pred in ukiobj.y_pred]
+    observation_errors = section52_observation_errors(y_obs, data_y_pred)
     covariance_norms = [norm(cov_i) for cov_i in ukiobj.θθ_cov]
 
     tau_est = ukiobj.θ_mean[end]
     grid_vor_est = reconstruct_initial_vorticity(sparam, tau_est)
     rel_vorticity_error = norm(grid_vor_est - sparam.grid_vor) / norm(sparam.grid_vor)
-    rel_observation_error = norm(y_obs - ukiobj.y_pred[end]) / norm(y_obs)
+    rel_observation_error = norm(y_obs - data_y_pred[end]) / norm(y_obs)
 
     result = (
         sparam=sparam,
@@ -296,7 +324,12 @@ function run_section52_uki(;
         y_ref=y_ref,
         y_obs=y_obs,
         obs_cov=obs_cov,
+        y_uki=y_uki,
+        obs_cov_uki=obs_cov_uki,
+        prior_mean=prior_mean_vec,
+        prior_cov=prior_cov_mat,
         ukiobj=ukiobj,
+        tau_est=tau_est,
         grid_vor_est=grid_vor_est,
         vorticity_errors=vorticity_errors,
         observation_errors=observation_errors,
