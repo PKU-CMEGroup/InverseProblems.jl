@@ -36,12 +36,6 @@ function EKIObj(filter_type::String, θ0::Array{FT,2}, y_pred_0::Array{FT,2}, y0
     return obj
 end
 
-function is_dropout_optimization_filter(filter_type::String)
-    return filter_type == "dropout-EAKI" ||
-           filter_type == "dropout-ETKI" ||
-           filter_type == "dropout-NF-EKI"
-end
-
 function active_svd_rank(s::AbstractVector{FT}) where FT<:AbstractFloat
     isempty(s) && return 0
     max_s = maximum(s)
