@@ -125,7 +125,7 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
             θ_new = θb + K * (y_obs .- xb)
         end
         
-    elseif filter_type == "dropout-NF-EKI"
+    elseif filter_type == "dropout-EKI"
         # Dropout optimization based on the noise-free EKI covariance update
         θ_hat = θb + K * (y_obs .- xb)
         m_hat = mean(θ_hat, dims=2)
