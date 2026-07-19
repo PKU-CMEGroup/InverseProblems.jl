@@ -391,7 +391,7 @@ function run_section52_inflation_eki_smoke_test(;
         n_iter=1,
         n_ens=17,
         perturbation_wavenumber=2.0,
-        filter_type="D-ETKI",
+        filter_type="dropout-ETKI",
         output_file=output_file,
     )
 end

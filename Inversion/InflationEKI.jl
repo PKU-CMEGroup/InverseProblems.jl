@@ -21,18 +21,20 @@ mutable struct EKIObj{FT<:AbstractFloat, IT<:Int}
     Δτ::FT
     # Dropout rate for dropout optimization EAKI/ETKI
     dropout_rate::FT
+    # Whether to use the inflated mean-field prediction step
+    inflation::Bool
 end
 
 # Constructor
 function EKIObj(filter_type::String, θ0::Array{FT,2}, y_pred_0::Array{FT,2}, y0::Array{FT,1}, 
-                        Σ_y::Array{FT,2}, Δτ::FT, dropout_rate::FT=FT(0.5)) where FT<:AbstractFloat
+                        Σ_y::Array{FT,2}, Δτ::FT, dropout_rate::FT=FT(0.5), inflation::Bool=true) where FT<:AbstractFloat
     θ = [θ0]
     y_pred = [y_pred_0]
 
     N_θ, N_ens = size(θ0)
     N_y = size(y0, 1)
     Σ_y_sqrt = LowerTriangular(cholesky(Σ_y).L)
-    obj = EKIObj(filter_type, θ, y_pred, y0, Σ_y_sqrt, N_ens, N_θ, N_y, Δτ, dropout_rate)
+    obj = EKIObj(filter_type, θ, y_pred, y0, Σ_y_sqrt, N_ens, N_θ, N_y, Δτ, dropout_rate, inflation)
     return obj
 end
 
@@ -94,8 +96,13 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
     filter_type = eki.filter_type
     θ_prev = eki.θ[end]
     mn = mean(θ_prev, dims=2)
-    θb = mn .+ sqrt(1 / (1 - eki.Δτ)) .* (θ_prev .- mn)
-    Σ_y_sqrt_n = sqrt(1/eki.Δτ) * eki.Σ_y_sqrt
+    if eki.inflation
+        θb = mn .+ sqrt(1 / (1 - eki.Δτ)) .* (θ_prev .- mn)
+        Σ_y_sqrt_n = sqrt(1 / eki.Δτ) * eki.Σ_y_sqrt
+    else
+        θb = θ_prev
+        Σ_y_sqrt_n = eki.Σ_y_sqrt
+    end
 
     # --- Predicted observations ---
     xb = forward(θb)
@@ -208,7 +215,7 @@ end
 # Main EKI run
 function EKI_Run(forward::Function, θ0::Array{FT,2}, Σ_y::Array{FT,2}, y::Array{FT,1};
                  filter_type::String="EKI", Δτ::FT=0.5, N_iter::Int=50, forward_parallel::Bool=false,
-                 dropout_rate::FT=FT(0.5)) where FT<:AbstractFloat
+                 dropout_rate::FT=FT(0.5), inflation::Bool=true) where FT<:AbstractFloat
     N_y = size(y, 1)    
 
     # Obtain forward function for parallel evaluation
@@ -216,7 +223,7 @@ function EKI_Run(forward::Function, θ0::Array{FT,2}, Σ_y::Array{FT,2}, y::Arra
 
     y_pred_0 = func(θ0)
     # EKI obj initialization
-    obj = EKIObj(filter_type, θ0, y_pred_0, y, Σ_y, Δτ, dropout_rate)
+    obj = EKIObj(filter_type, θ0, y_pred_0, y, Σ_y, Δτ, dropout_rate, inflation)
     @info "Running ", filter_type, " with ensemble size ", size(θ0,2)
     for n in 1:N_iter
         if n % max(1, div(N_iter,10)) == 0
