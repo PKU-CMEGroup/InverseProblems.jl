@@ -1,7 +1,7 @@
 using LinearAlgebra, Random, Statistics, Distributions
 
 mutable struct EKIObj{FT<:AbstractFloat, IT<:Int}
-    # Type of ensemble Kalman inversion: "EKI", "ETKI", "EAKI"
+    # Type of ensemble Kalman inversion: "EKI", "ETKI", "EAKI", "DEKI"
     filter_type::String
     # Ensemble of parameters at each iteration: θ ∈ R^(N_θ × N_ens)
     θ::Vector{Array{FT,2}}
@@ -23,18 +23,27 @@ mutable struct EKIObj{FT<:AbstractFloat, IT<:Int}
     dropout_rate::FT
     # Whether to use the inflated mean-field prediction step
     inflation::Bool
+    # Reference deviation step size h in Algorithm 2.1 of dropout EKI
+    dropout_deviation_Δτ::FT
+    # Reference mean step size h_tilde in Algorithm 2.1 of dropout EKI
+    dropout_mean_Δτ::FT
+    # Singular-value truncation bound M_G in Algorithm 2.1 of dropout EKI
+    dropout_linearization_bound::FT
 end
 
 # Constructor
 function EKIObj(filter_type::String, θ0::Array{FT,2}, y_pred_0::Array{FT,2}, y0::Array{FT,1}, 
-                        Σ_y::Array{FT,2}, Δτ::FT, dropout_rate::FT=FT(0.5), inflation::Bool=true) where FT<:AbstractFloat
+                        Σ_y::Array{FT,2}, Δτ::FT, dropout_rate::FT=FT(0.5), inflation::Bool=true,
+                        dropout_deviation_Δτ::FT=Δτ, dropout_mean_Δτ::FT=Δτ,
+                        dropout_linearization_bound::FT=FT(Inf)) where FT<:AbstractFloat
     θ = [θ0]
     y_pred = [y_pred_0]
 
     N_θ, N_ens = size(θ0)
     N_y = size(y0, 1)
     Σ_y_sqrt = LowerTriangular(cholesky(Σ_y).L)
-    obj = EKIObj(filter_type, θ, y_pred, y0, Σ_y_sqrt, N_ens, N_θ, N_y, Δτ, dropout_rate, inflation)
+    obj = EKIObj(filter_type, θ, y_pred, y0, Σ_y_sqrt, N_ens, N_θ, N_y, Δτ, dropout_rate, inflation,
+                 dropout_deviation_Δτ, dropout_mean_Δτ, dropout_linearization_bound)
     return obj
 end
 
@@ -78,6 +87,48 @@ function dropout_optimization_mean(eki::EKIObj, forward::Function, m_hat::Array{
     m_new = m_sub .+ reshape((Z_tilde_⊥ * Y_tilde_⊥') *
                              ((Y_tilde_⊥ * Y_tilde_⊥' + Σ_y) \ (eki.y .- vec(x_tilde_mean))), :, 1)
     return reshape(m_new, :, 1)
+end
+
+function dropout_mask(eki::EKIObj{FT}) where FT<:AbstractFloat
+    dropout_λ = 1 - eki.dropout_rate
+    0 < dropout_λ <= 1 || error("dropout_rate must satisfy 0 <= dropout_rate < 1")
+
+    ρ = rand(Bernoulli(dropout_λ), eki.N_θ)
+    while sum(ρ) == 0
+        ρ = rand(Bernoulli(dropout_λ), eki.N_θ)
+    end
+    return reshape(FT.(ρ), :, 1)
+end
+
+function deki_linearized_observation_deviations(T::Array{FT,2}, Y::Array{FT,2}, M_G::FT) where FT<:AbstractFloat
+    M_G > 0 || error("dropout_linearization_bound must be positive")
+
+    svd_T = svd(T; full=false)
+    r_T = active_svd_rank(svd_T.S)
+    if r_T == 0
+        return zeros(FT, size(Y, 1), size(T, 2))
+    end
+
+    S_T = svd_T.S[1:r_T]
+    V_T = svd_T.V[:,1:r_T]
+
+    svd_Y = svd(Y; full=false)
+    r_Y = active_svd_rank(svd_Y.S)
+    if r_Y == 0
+        return zeros(FT, size(Y, 1), size(T, 2))
+    end
+
+    W = svd_Y.U[:,1:r_Y]
+    R = Diagonal(svd_Y.S[1:r_Y]) * svd_Y.V[:,1:r_Y]'
+    A = R * V_T * Diagonal(1 ./ S_T)
+
+    if isfinite(M_G)
+        svd_A = svd(A; full=false)
+        A = svd_A.U * Diagonal(min.(svd_A.S, M_G)) * svd_A.V'
+    end
+
+    Q = Diagonal(S_T) * V_T'
+    return W * A * Q
 end
 
 # Ensemble forward evaluation (parallel)
@@ -139,6 +190,41 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
         Z_hat = (θ_hat .- m_hat) ./ sqrt(eki.N_ens - 1)
         m_new = dropout_optimization_mean(eki, forward, m_hat, Z_hat, Σ_y_n)
         θ_new = m_new .+ Z_hat * sqrt(eki.N_ens - 1)
+
+    elseif filter_type == "DEKI"
+        # Dropout EKI, Algorithm 2.1: mean/deviation separation with parameter dropout
+        T = θb .- mn
+        Z = T ./ sqrt(eki.N_ens - 1)
+        Cuu_norm = maximum(svdvals(Z))^2
+
+        if Cuu_norm == 0
+            θ_new = copy(θb)
+        else
+            h_n = eki.dropout_deviation_Δτ / (Cuu_norm + FT(1e-12))
+            h_tilde_n = eki.dropout_mean_Δτ / (Cuu_norm + FT(1e-12))
+            ρ = dropout_mask(eki)
+
+            x_mn = forward(mn)
+            θ_tilde = mn .+ ρ .* T
+            x_tilde = forward(θ_tilde)
+
+            Z_tilde = (θ_tilde .- mn) ./ sqrt(eki.N_ens - 1)
+            # Y_tilde = (x_tilde .- x_mn) ./ sqrt(eki.N_ens - 1)
+            Y_tilde = (x_tilde .- mean(x_tilde, dims=2)) ./ sqrt(eki.N_ens - 1)
+            Cθx_tilde = Z_tilde * Y_tilde'
+            Cxx_tilde = Y_tilde * Y_tilde'
+
+            mn1 = mn .+ reshape(h_tilde_n * Cθx_tilde *
+                                 ((Σ_y_n + h_tilde_n * Cxx_tilde) \ (eki.y .- vec(x_mn))), :, 1)
+
+            # Y_linear = xb .- x_mn
+            Y_linear = xb .- mean(xb, dims=2)
+            G_T = deki_linearized_observation_deviations(T, Y_linear, eki.dropout_linearization_bound)
+            Cθx_linear = (T * G_T') ./ (eki.N_ens - 1)
+            Cxx_linear = (G_T * G_T') ./ (eki.N_ens - 1)
+            T_new = T - h_n * Cθx_linear * ((Σ_y_n + h_n * Cxx_linear) \ G_T)
+            θ_new = mn1 .+ T_new
+        end
 
     elseif filter_type == "dropout-EAKI"
         # Dropout optimization based on the EAKI covariance update
@@ -215,15 +301,21 @@ end
 # Main EKI run
 function EKI_Run(forward::Function, θ0::Array{FT,2}, Σ_y::Array{FT,2}, y::Array{FT,1};
                  filter_type::String="EKI", Δτ::FT=0.5, N_iter::Int=50, forward_parallel::Bool=false,
-                 dropout_rate::FT=FT(0.5), inflation::Bool=true) where FT<:AbstractFloat
+                 dropout_rate::FT=FT(0.5), inflation::Bool=true,
+                 dropout_deviation_Δτ::Union{Nothing,FT}=nothing,
+                 dropout_mean_Δτ::Union{Nothing,FT}=nothing,
+                 dropout_linearization_bound::FT=FT(Inf)) where FT<:AbstractFloat
     N_y = size(y, 1)    
+    dropout_deviation_Δτ_actual = isnothing(dropout_deviation_Δτ) ? Δτ : dropout_deviation_Δτ
+    dropout_mean_Δτ_actual = isnothing(dropout_mean_Δτ) ? Δτ : dropout_mean_Δτ
 
     # Obtain forward function for parallel evaluation
     func(x) = forward_parallel ? forward(x) : ensemble_forward(forward, x, N_y)
 
     y_pred_0 = func(θ0)
     # EKI obj initialization
-    obj = EKIObj(filter_type, θ0, y_pred_0, y, Σ_y, Δτ, dropout_rate, inflation)
+    obj = EKIObj(filter_type, θ0, y_pred_0, y, Σ_y, Δτ, dropout_rate, inflation,
+                 dropout_deviation_Δτ_actual, dropout_mean_Δτ_actual, dropout_linearization_bound)
     @info "Running ", filter_type, " with ensemble size ", size(θ0,2)
     for n in 1:N_iter
         if n % max(1, div(N_iter,10)) == 0

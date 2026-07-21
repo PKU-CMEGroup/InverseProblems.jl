@@ -261,6 +261,7 @@ function run_section52_inflation_eki(;
     output_file::String=joinpath(@__DIR__, "Figs", "InflationEKI_Barotropic_Section52.jls"),
     save_plots::Bool=true,
     plot_prefix::Union{String,Nothing}=nothing,
+    inflation::Bool=true,
 )
     sparam, tau_ref = build_section52_inflation_eki_problem(
         num_fourier=num_fourier,
@@ -306,6 +307,7 @@ function run_section52_inflation_eki(;
         Δτ=inflation_dt,
         N_iter=n_iter,
         dropout_rate=dropout_rate,
+        inflation=inflation
     )
 
     tau_history = [dropdims(mean(θ, dims=2), dims=2) for θ in inflation_ekiobj.θ[2:end]]
