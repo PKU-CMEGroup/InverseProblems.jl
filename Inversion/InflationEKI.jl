@@ -55,7 +55,7 @@ function active_svd_rank(s::AbstractVector{FT}) where FT<:AbstractFloat
     return isnothing(r) ? 0 : r
 end
 
-function dropout_optimization_mean(eki::EKIObj, forward::Function, mn::Array{FT,2},
+function dropout_optimization_mean(eki::EKIObj, forward::Function, mn::Array{FT,2}, m_hat::Array{FT,2},
                                    Zb::Array{FT,2}, Yb::Array{FT,2}, Σ_y::Array{FT,2}) where FT<:AbstractFloat
     dropout_λ = 1 - eki.dropout_rate
     0 < dropout_λ <= 1 || error("dropout_rate must satisfy 0 <= dropout_rate < 1")
@@ -66,7 +66,7 @@ function dropout_optimization_mean(eki::EKIObj, forward::Function, mn::Array{FT,
     end
     Z_tilde = reshape(ρ, :, 1) .* Zb
 
-    θ_tilde = mn .+ Zb * sqrt(eki.N_ens - 1)
+    θ_tilde = m_hat .+ Z_tilde * sqrt(eki.N_ens - 1)
     x_tilde = forward(θ_tilde)
     x_tilde_mean = mean(x_tilde, dims=2)
     Y_tilde = (x_tilde .- x_tilde_mean) ./ sqrt(eki.N_ens - 1)
@@ -183,7 +183,7 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
         θ_hat = θb + K * (y_obs .- xb)
         m_hat = mean(θ_hat, dims=2)
         Z_hat = (θ_hat .- m_hat) ./ sqrt(eki.N_ens - 1)
-        m_new = dropout_optimization_mean(eki, forward, mn, Zb, Yb, Σ_y_n)
+        m_new = dropout_optimization_mean(eki, forward, mn, m_hat, Zb, Yb, Σ_y_n)
         θ_new = m_new .+ Z_hat * sqrt(eki.N_ens - 1)
 
     elseif filter_type == "DEKI"
@@ -240,7 +240,7 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
             A1 = P_r * Diagonal(Db_sqrt[1:r]) * U
             A2 = Diagonal(sqrt.(D)) * inv(Diagonal(Db_sqrt[1:r])) * P_r'
             Z_hat = A1 * (A2 * Zb)
-            m_new = m_hat + dropout_optimization_mean(eki, forward, mn, Zb, Yb, Σ_y_n) 
+            m_new = m_hat + dropout_optimization_mean(eki, forward, mn, m_hat, Zb, Yb, Σ_y_n) 
             θ_new = m_new .+ Z_hat * sqrt(eki.N_ens - 1)
         end
 
@@ -252,7 +252,7 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
         T = P * inv(sqrt.(I + Diagonal(D))) * P'
         Z_hat = Zb * T
         m_hat = mn .+ reshape(K * (eki.y .- vec(x_mean_bar)), :, 1)
-        m_new = m_hat + dropout_optimization_mean(eki, forward, mn, Zb, Yb, Σ_y_n) 
+        m_new = m_hat + dropout_optimization_mean(eki, forward, mn, m_hat, Zb, Yb, Σ_y_n) 
         θ_new = m_new .+ Z_hat * sqrt(eki.N_ens - 1)
 
     
