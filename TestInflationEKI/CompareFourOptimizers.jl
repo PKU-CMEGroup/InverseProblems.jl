@@ -6,15 +6,14 @@ using Statistics
 ENV["MPLBACKEND"] = get(ENV, "MPLBACKEND", "Agg")
 
 using PyPlot
-using Optimization
-using OptimizationCMAEvolutionStrategy
-using DFOLS
 
 include(joinpath(@__DIR__, "..", "Inversion", "InflationEKI.jl"))
 include(joinpath(@__DIR__, "..", "Derivative-Free-Variational-Inference", "MultiModal.jl"))
+include(joinpath(@__DIR__, "..", "Inversion", "CMAES.jl"))
+include(joinpath(@__DIR__, "..", "Inversion", "DFOLS.jl"))
 
 # Main knobs. Change these before running the script.
-const PROBLEM_NAMES = ["Circle", "Rosenbrock", "Double_banana"]
+const PROBLEM_NAMES = ["Circle", "Rosenbrock", "Double_banana", "Funnel"]
 const THETA_DIM = 100
 const N_ITER = 500
 const N_ENS = 50
@@ -22,12 +21,12 @@ const N_GRID = 250
 const INFLATION_DT = 0.2
 const DROPOUT_RATE = 0.5
 const INITIAL_STD = 1.0
-const SEED = 20260824
+const INITIAL_OFFSET_SCALE = 0.0
+const INITIAL_OFFSET_DIRECTION = "reference_away"
+const SEED = 2026
 const OUTPUT_DIR = joinpath(@__DIR__, "Figs")
 
-const EKI_DT_KEY = Symbol(Char(0x0394), Char(0x03c4))
 const EKI_THETA_FIELDS = (Symbol("theta"), Symbol(Char(0x03b8)), Symbol(Char(0x80c3)))
-const CMAES = OptimizationCMAEvolutionStrategy.CMAEvolutionStrategy
 
 Base.@kwdef struct ComparisonConfig
     problem_names::Vector{String} = copy(PROBLEM_NAMES)
@@ -38,6 +37,8 @@ Base.@kwdef struct ComparisonConfig
     inflation_dt::Float64 = INFLATION_DT
     dropout_rate::Float64 = DROPOUT_RATE
     initial_std::Float64 = INITIAL_STD
+    initial_offset_scale::Float64 = INITIAL_OFFSET_SCALE
+    initial_offset_direction::String = INITIAL_OFFSET_DIRECTION
     seed::Int = SEED
     output_dir::String = OUTPUT_DIR
     save_plots::Bool = true
@@ -80,6 +81,38 @@ end
 positive_for_log(x) = max.(x, eps(Float64))
 slug(name::String) = replace(lowercase(name), r"[^a-z0-9]+" => "-")
 
+# Compute a unit-norm initial-offset direction.
+#
+# "reference_away" points from the reference mean back toward the original
+#   initial region (approximately the origin), so adding a positive
+#   initial_offset_scale moves the initial ensemble farther from the reference.
+# "active_random" is a random direction supported only on the first
+#   marginal_dim coordinates that actually affect the benchmark objective.
+# "random" is a full-space random direction.
+function initial_offset_direction(spec::ProblemSpec, reference_mean::Vector{Float64},
+                                  mode::String, rng::AbstractRNG)
+    if mode == "reference_away"
+        d = zeros(length(reference_mean))
+        d[1:spec.marginal_dim] = -reference_mean[1:spec.marginal_dim]
+        n = norm(d)
+        if n > eps(Float64)
+            return d ./ n
+        end
+        mode = "active_random"
+    end
+
+    if mode == "active_random"
+        d = zeros(length(reference_mean))
+        d[1:spec.marginal_dim] = randn(rng, spec.marginal_dim)
+        return d ./ norm(d)
+    elseif mode == "random"
+        d = randn(rng, length(reference_mean))
+        return d ./ norm(d)
+    end
+
+    error("Unknown initial_offset_direction: $(mode)")
+end
+
 function problem_spec(name::String, theta_dim::Int)
     theta_dim >= 2 || error("theta_dim must be at least 2")
     n_tail = theta_dim - 2
@@ -120,6 +153,17 @@ function problem_spec(name::String, theta_dim::Int)
             (-3.0, 3.0),
             (-3.0, 3.0),
         )
+    elseif key == "funnel"
+        return ProblemSpec(
+            "Funnel",
+            "Funnel",
+            zeros(theta_dim),
+            ones(theta_dim),
+            Matrix{Float64}(I, theta_dim - 1, theta_dim - 1),
+            2,
+            (-10.0, 10.0),
+            (-20.0, 20.0),
+        )
     end
     error("Unknown problem name: $(name)")
 end
@@ -127,6 +171,18 @@ end
 full_args(spec::ProblemSpec) = (spec.y, spec.sigma_eta, spec.arg, spec.gtype)
 
 function marginal_args(spec::ProblemSpec)
+    if spec.gtype == "Funnel"
+        # The 2-D marginal of the funnel uses the scalar (1,1) block of the
+        # auxiliary scale matrix; passing the full (N-1)x(N-1) matrix would not
+        # match the 2-argument call to G.
+        arg_marginal = spec.arg isa AbstractMatrix ? spec.arg[1, 1] : spec.arg
+        return (
+            spec.y[1:spec.marginal_dim],
+            spec.sigma_eta[1:spec.marginal_dim],
+            arg_marginal,
+            spec.gtype,
+        )
+    end
     return (
         spec.y[1:spec.marginal_dim],
         spec.sigma_eta[1:spec.marginal_dim],
@@ -175,6 +231,12 @@ function make_problem(name::String, cfg::ComparisonConfig, seed::Int)
 
     rng = MersenneTwister(seed)
     theta0 = cfg.initial_std .* randn(rng, cfg.theta_dim, cfg.n_ens)
+
+    if cfg.initial_offset_scale != 0.0
+        d = initial_offset_direction(spec, grid.reference_mean,
+                                     cfg.initial_offset_direction, rng)
+        theta0 .+= cfg.initial_offset_scale .* reshape(d, :, 1)
+    end
 
     return ComparisonProblem(
         spec.label,
@@ -234,7 +296,7 @@ function objective_curve_from_ensembles(history, phi::Function)
 end
 
 function run_eki_method(problem::ComparisonProblem, ctx, cfg::ComparisonConfig,
-        filter_type::String, label::String, seed::Int)
+        filter_type::String, label::String, seed::Int; inflation::Bool=true)
     Random.seed!(seed)
     ekiobj = EKI_Run(
         problem.forward,
@@ -242,10 +304,10 @@ function run_eki_method(problem::ComparisonProblem, ctx, cfg::ComparisonConfig,
         problem.sigma_y,
         problem.y;
         filter_type=filter_type,
-        EKI_DT_KEY => cfg.inflation_dt,
+        Δτ=cfg.inflation_dt,
         N_iter=cfg.n_iter,
         dropout_rate=cfg.dropout_rate,
-        inflation=true,
+        inflation=inflation,
     )
     history = ensemble_history(ekiobj, problem.theta_dim)
     curves = objective_curve_from_ensembles(history, ctx.phi)
@@ -277,118 +339,70 @@ function run_cma_es(problem::ComparisonProblem, ctx, cfg::ComparisonConfig, seed
     x0 = vec(mean(problem.theta0, dims=2))
     objective(x) = ctx.phi(Vector{Float64}(x))
 
-    best_values = Float64[objective(x0)]
-    best_points = Vector{Float64}[copy(x0)]
-    covariance_norm = Float64[sqrt(problem.theta_dim) * cfg.initial_std^2]
-    final_population = copy(problem.theta0)
-
-    function callback(opt, y, fvals, perm)
-        best_point = Vector{Float64}(CMAES.xbest(opt))
-        push!(best_points, best_point)
-        push!(best_values, CMAES.fbest(opt))
-
-        population = Matrix{Float64}(CMAES.compute_input(opt.p, y))
-        final_population = population
-        push!(covariance_norm, covariance_norm_from_columns(population))
-        return nothing
-    end
-
-    opt = CMAES.minimize(
+    cma_result = run_cmaes(
         objective,
-        x0,
-        cfg.initial_std;
-        popsize=cfg.n_ens,
-        maxiter=cfg.n_iter,
-        seed=UInt(seed),
-        verbosity=0,
-        callback=callback,
+        x0;
+        sigma0=cfg.initial_std,
+        max_iter=cfg.n_iter,
+        seed=seed,
     )
 
-    if isempty(best_points) || best_values[end] != CMAES.fbest(opt)
-        push!(best_points, Vector{Float64}(CMAES.xbest(opt)))
-        push!(best_values, CMAES.fbest(opt))
-        push!(covariance_norm, covariance_norm[end])
-    end
+    best_points = cma_result.best_history
+    best_values = cma_result.best_f_history
+    covariance_norm = cma_result.covariance_history
+    final_points = isempty(best_points) ? reshape(copy(x0), :, 1) : hcat(best_points...)
 
     return (;
         label="CMA-ES",
         method="CMA-ES",
-        object=opt,
-        final_points=final_population,
+        object=cma_result,
+        final_points=final_points,
         representative_points=best_points,
         optimization_error=best_values,
-        covariance_norm,
+        covariance_norm=covariance_norm,
         x_axis=0:(length(best_values) - 1),
-    )
-end
-
-function dfols_solve_with_budget(objfun::Function, x0::Vector{Float64}, maxfun::Int)
-    return DFOLS.dfols[:solve](
-        objfun,
-        x0;
-        maxfun=maxfun,
-        rhobeg=0.5,
-        rhoend=1e-8,
     )
 end
 
 function run_dfols(problem::ComparisonProblem, ctx, cfg::ComparisonConfig)
     x0 = vec(mean(problem.theta0, dims=2))
-    points = Vector{Float64}[copy(x0)]
-    best_points = Vector{Float64}[copy(x0)]
-    best_values = Float64[ctx.phi(x0)]
-    covariance_norm = Float64[0.0]
+    # Give DFO-LS a reasonable evaluation budget.  The old code used a budget
+    # that was too small compared with the requested iteration count.
+    maxfun = max(1000, 3 * cfg.n_iter)
 
-    function objfun(x)
-        theta = Vector{Float64}(x)
-        value = ctx.phi(theta)
-        push!(points, copy(theta))
-        if value < best_values[end]
-            push!(best_values, value)
-            push!(best_points, copy(theta))
-        else
-            push!(best_values, best_values[end])
-            push!(best_points, copy(best_points[end]))
-        end
-        cloud = best_point_cloud(points, [ctx.phi(p) for p in points], cfg.n_ens)
-        push!(covariance_norm, covariance_norm_from_columns(cloud))
-        return ctx.residual(theta)
+    dfo_result = run_dfols(ctx.residual, x0; maxfun=maxfun, save_history=true)
+
+    history_length = dfo_result.history === nothing ? 0 : length(dfo_result.history.x)
+    @info "DFO-LS finished" problem=problem.name nf=dfo_result.nf flag=dfo_result.flag msg=dfo_result.msg final_objective=dfo_result.obj history_points=history_length
+
+    if dfo_result.history === nothing || isempty(dfo_result.history.x)
+        traj = [copy(x0); [copy(dfo_result.x) for _ in 1:max(1, cfg.n_iter)]]
+    else
+        traj = vcat([copy(x0)], collect(dfo_result.history.x))
     end
 
-    maxfun = max(cfg.n_iter + 1, 2 * problem.theta_dim + 1)
-    solution = try
-        dfols_solve_with_budget(objfun, x0, maxfun)
-    catch err
-        @warn "DFO-LS stopped before returning a solution" problem=problem.name exception=(err, catch_backtrace())
-        nothing
+    best_points = traj
+    best_values = [ctx.phi(p) for p in traj]
+    covariance_norm = Vector{Float64}(undef, length(best_points))
+    for i in 1:length(best_points)
+        cloud = hcat(best_points[1:i]...)
+        covariance_norm[i] = covariance_norm_from_columns(cloud)
     end
-
-    if solution !== nothing
-        theta = Vector{Float64}(solution[:x])
-        value = ctx.phi(theta)
-        push!(points, copy(theta))
-        if value < best_values[end]
-            push!(best_values, value)
-            push!(best_points, copy(theta))
-        else
-            push!(best_values, best_values[end])
-            push!(best_points, copy(best_points[end]))
-        end
-        cloud = best_point_cloud(points, [ctx.phi(p) for p in points], cfg.n_ens)
-        push!(covariance_norm, covariance_norm_from_columns(cloud))
-    end
-
-    final_values = [ctx.phi(p) for p in points]
-    final_cloud = best_point_cloud(points, final_values, cfg.n_ens)
+    final_points = isempty(best_points) ? reshape(copy(x0), :, 1) : hcat(best_points...)
 
     return (;
         label="DFO-LS",
         method="DFO-LS",
-        object=solution,
-        final_points=final_cloud,
+        object=dfo_result,
+        nf=dfo_result.nf,
+        flag=dfo_result.flag,
+        msg=dfo_result.msg,
+        final_objective=dfo_result.obj,
+        history_length=history_length,
+        final_points=final_points,
         representative_points=best_points,
         optimization_error=best_values,
-        covariance_norm,
+        covariance_norm=covariance_norm,
         x_axis=0:(length(best_values) - 1),
     )
 end
@@ -397,7 +411,7 @@ function run_problem_comparison(problem::ComparisonProblem, cfg::ComparisonConfi
     ctx = objective_context(problem)
     runs = NamedTuple[]
     push!(runs, run_eki_method(problem, ctx, cfg, "EAKI", "Inflation EAKI", seed + 1))
-    push!(runs, run_eki_method(problem, ctx, cfg, "DEKI", "DEKI", seed + 2))
+    push!(runs, run_eki_method(problem, ctx, cfg, "DEKI", "DEKI", seed + 2; inflation=false))
     push!(runs, run_cma_es(problem, ctx, cfg, seed + 3))
     push!(runs, run_dfols(problem, ctx, cfg))
     return runs
@@ -458,10 +472,15 @@ function plot_curve_panel!(ax, runs, field::Symbol, title::String, ylabel::Strin
     ax.legend(fontsize=7, loc="best", frameon=false)
 end
 
+function experiment_slug(cfg::ComparisonConfig)
+    dir = replace(cfg.initial_offset_direction, r"[^a-zA-Z0-9]+" => "_")
+    return "off$(cfg.initial_offset_scale)_dir$(dir)"
+end
+
 function default_output_file(cfg::ComparisonConfig)
     problem_part = join(slug.(cfg.problem_names), "_")
     return joinpath(cfg.output_dir,
-        "four_optimizers_$(problem_part)_dim$(cfg.theta_dim)_ens$(cfg.n_ens)_iter$(cfg.n_iter).png")
+        "four_optimizers_$(problem_part)_dim$(cfg.theta_dim)_ens$(cfg.n_ens)_iter$(cfg.n_iter)_$(experiment_slug(cfg)).png")
 end
 
 function plot_comparison(problems, results::Dict{String, Vector{NamedTuple}}, output_file::String)
@@ -490,14 +509,14 @@ function run_four_optimizer_comparison(cfg::ComparisonConfig=ComparisonConfig())
 
     for (index, name) in enumerate(cfg.problem_names)
         problem = make_problem(name, cfg, cfg.seed + 1000 * index)
-        @info "Running four-optimizer comparison" problem=problem.name dim=problem.theta_dim n_iter=cfg.n_iter n_ens=cfg.n_ens
+        @info "Running four-optimizer comparison" problem=problem.name dim=problem.theta_dim n_iter=cfg.n_iter n_ens=cfg.n_ens initial_offset_scale=cfg.initial_offset_scale initial_offset_direction=cfg.initial_offset_direction
         push!(problems, problem)
         results[problem.name] = run_problem_comparison(problem, cfg, cfg.seed + 1000 * index)
     end
 
     plot_file = cfg.save_plots ? plot_comparison(problems, results, default_output_file(cfg)) : nothing
     result_file = joinpath(cfg.output_dir,
-        "four_optimizers_$(join(slug.(cfg.problem_names), "_"))_dim$(cfg.theta_dim)_ens$(cfg.n_ens)_iter$(cfg.n_iter).jls")
+        "four_optimizers_$(join(slug.(cfg.problem_names), "_"))_dim$(cfg.theta_dim)_ens$(cfg.n_ens)_iter$(cfg.n_iter)_$(experiment_slug(cfg)).jls")
     ensure_parent_dir(result_file)
     serialize(result_file, (; config=cfg, problems, results, plot_file))
 
