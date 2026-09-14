@@ -41,7 +41,24 @@ function EKIObj(filter_type::String, θ0::Array{FT,2}, y_pred_0::Array{FT,2}, y0
 
     N_θ, N_ens = size(θ0)
     N_y = size(y0, 1)
-    Σ_y_sqrt = LowerTriangular(cholesky(Σ_y).L)
+
+    # Robust observation-noise square root: try the standard Cholesky first,
+    # then add a small diagonal regularization if the covariance is not
+    # numerically positive definite.
+    local Σ_y_sqrt
+    try
+        Σ_y_sqrt = LowerTriangular(cholesky(Symmetric(Matrix(Σ_y))).L)
+    catch
+        # If Cholesky fails, project the covariance onto the positive-semidefinite
+        # cone via its eigenvalue decomposition before computing the sqrt.
+        eigF = eigen(Symmetric(Matrix(Σ_y)))
+        λmax = maximum(abs, eigF.values)
+        λfloor = λmax == 0 ? one(FT) : max(eps(FT) * λmax, FT(1e-12) * λmax)
+        λ = max.(eigF.values, λfloor)
+        Σ_y_reg = eigF.vectors * Diagonal(λ) * eigF.vectors'
+        Σ_y_sqrt = LowerTriangular(cholesky(Symmetric(Σ_y_reg)).L)
+    end
+
     obj = EKIObj(filter_type, θ, y_pred, y0, Σ_y_sqrt, N_ens, N_θ, N_y, Δτ, dropout_rate, inflation,
                  dropout_deviation_Δτ, dropout_mean_Δτ, dropout_linearization_bound)
     return obj
@@ -54,6 +71,43 @@ function active_svd_rank(s::AbstractVector{FT}) where FT<:AbstractFloat
     tol = max(eps(FT) * length(s) * max_s, FT(1e-12) * max_s)
     r = findlast(s .> tol)
     return isnothing(r) ? 0 : r
+end
+
+# ---------------------------------------------------------------------------
+# Numerical-stability helpers
+# ---------------------------------------------------------------------------
+
+# Robust pseudo-inverse: some LAPACK versions fail in pinv's divide-and-conquer
+# SVD on rank-deficient matrices, so fall back to an explicit thin SVD.
+function _safe_pinv(A::AbstractMatrix{FT}) where FT<:AbstractFloat
+    try
+        return pinv(A)
+    catch
+        F = svd(A; full=false, alg=LinearAlgebra.QRIteration())
+        tol = max(eps(FT) * maximum(size(A)) * maximum(F.S), FT(1e-12) * maximum(F.S))
+        r = count(>(tol), F.S)
+        if r == 0
+            return zeros(FT, size(A, 2), size(A, 1))
+        end
+        return F.V[:, 1:r] * Diagonal(1 ./ F.S[1:r]) * F.U[:, 1:r]'
+    end
+end
+
+# Solve A*x = b using a SVD-based pseudo-inverse.  This avoids direct
+# factorization of near-singular sample covariance matrices and gracefully
+# handles rank-deficient systems.
+function stable_solve(A::AbstractMatrix, b::Union{AbstractVector,AbstractMatrix})
+    return _safe_pinv(A) * b
+end
+
+# Inverse of a diagonal represented by a vector, with small singular values
+# clamped to zero to avoid enormous amplification.
+function safe_diag_inv(d::AbstractVector{FT}) where FT<:AbstractFloat
+    isempty(d) && return similar(d, FT)
+    m = maximum(abs, d)
+    m == zero(FT) && return zeros(FT, length(d))
+    tol = max(eps(FT) * length(d) * m, FT(1e-12) * m)
+    return [abs(x) > tol ? inv(x) : zero(FT) for x in d]
 end
 
 function dropout_optimization_mean(eki::EKIObj, forward::Function, m_hat::Array{FT,2},
@@ -78,12 +132,12 @@ function dropout_optimization_mean(eki::EKIObj, forward::Function, m_hat::Array{
     Y_tilde = (x_tilde .- x_tilde_mean) ./ sqrt(eki.N_ens - 1)
     x_tilde_m_n = forward(m_hat)
 
-    L = pinv(Y_hat' * (Σ_y \ Y_hat)) * (Y_hat' * (Σ_y \ Y_tilde))
+    L = _safe_pinv(Y_hat' * stable_solve(Σ_y, Y_hat)) * (Y_hat' * stable_solve(Σ_y, Y_tilde))
     Z_tilde_⊥ = Z_tilde - Z_hat * L
     Y_tilde_⊥ = Y_tilde - Y_hat * L
 
     m_new = m_hat .+ reshape((Z_tilde_⊥ * Y_tilde_⊥') *
-                             ((Y_tilde_⊥ * Y_tilde_⊥' + Σ_y) \ (eki.y .- x_tilde_m_n)), :, 1)
+                             stable_solve(Y_tilde_⊥ * Y_tilde_⊥' + Σ_y, eki.y .- x_tilde_m_n), :, 1)
     return reshape(m_new, :, 1)
 end
 
@@ -118,7 +172,7 @@ function deki_linearized_observation_deviations(T::Array{FT,2}, Y::Array{FT,2}, 
 
     W = svd_Y.U[:,1:r_Y]
     R = Diagonal(svd_Y.S[1:r_Y]) * svd_Y.V[:,1:r_Y]'
-    A = R * V_T * Diagonal(1 ./ S_T)
+    A = R * V_T * Diagonal(safe_diag_inv(S_T))
 
     if isfinite(M_G)
         svd_A = svd(A; full=false)
@@ -146,6 +200,7 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
     θ_prev = eki.θ[end]
     mn = mean(θ_prev, dims=2)
     if eki.inflation
+        0 < eki.Δτ < 1 || error("Δτ must satisfy 0 < Δτ < 1 when inflation is enabled")
         θb = mn .+ sqrt(1 / (1 - eki.Δτ)) .* (θ_prev .- mn)
         Σ_y_sqrt_n = sqrt(1 / eki.Δτ) * eki.Σ_y_sqrt
     else
@@ -168,8 +223,9 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
     Cθx = Zb * Yb'
     Cxx = Yb * Yb' + Σ_y_n
 
-    # Kalman gain
-    K = Cθx / Cxx
+    # Kalman gain (SVD-based pseudo-inverse for robustness on rank-deficient
+    # or ill-conditioned sample covariances)
+    K = Cθx * _safe_pinv(Cxx)
 
     # --- Analysis step based on filter_type ---
     if filter_type == "EKI" || filter_type == "NF-EKI"
@@ -199,8 +255,9 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
         if Cuu_norm == 0
             θ_new = copy(θb)
         else
-            h_n = eki.dropout_deviation_Δτ / (Cuu_norm + FT(1e-12))
-            h_tilde_n = eki.dropout_mean_Δτ / (Cuu_norm + FT(1e-12))
+            reg_norm = sqrt(eps(FT)) * max(Cuu_norm, one(FT))
+            h_n = eki.dropout_deviation_Δτ / (Cuu_norm + reg_norm)
+            h_tilde_n = eki.dropout_mean_Δτ / (Cuu_norm + reg_norm)
             ρ = dropout_mask(eki)
 
             θ_tilde = mn .+ ρ .* T
@@ -213,7 +270,7 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
             Cxx_tilde = Y_tilde * Y_tilde'
 
             mn1 = mn .+ reshape(h_tilde_n * Cθx_tilde *
-                                 ((Σ_y_n + h_tilde_n * Cxx_tilde) \ (eki.y .- vec(x_mean_bar))), :, 1)
+                                 stable_solve(Σ_y_n + h_tilde_n * Cxx_tilde, eki.y .- vec(x_mean_bar)), :, 1)
             # mn1 = mn .+ reshape(h_tilde_n * Cθx_tilde *
             #                      ((Σ_y_n + h_tilde_n * Cxx_tilde) \ (eki.y .- mean(x_tilde, dims=2))), :, 1)
 
@@ -222,7 +279,7 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
             G_T = deki_linearized_observation_deviations(T, Y_linear, eki.dropout_linearization_bound)
             Cθx_linear = (T * G_T') ./ (eki.N_ens - 1)
             Cxx_linear = (G_T * G_T') ./ (eki.N_ens - 1)
-            T_new = T - h_n * Cθx_linear * ((Σ_y_n + h_n * Cxx_linear) \ G_T)
+            T_new = T - h_n * Cθx_linear * stable_solve(Σ_y_n + h_n * Cxx_linear, G_T)
             θ_new = mn1 .+ T_new
         end
 
@@ -237,11 +294,13 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
             P_r = P[:,1:r]
             V_r = V[:,1:r]
             temp = Σ_y_sqrt_n \ Yb
-            S = Symmetric(V_r' * inv(I + temp' * temp) * V_r)
+            S = Symmetric(V_r' * ((I + temp' * temp) \ V_r))
             eig = eigen(S)
             U, D = eig.vectors, eig.values
             A1 = P_r * Diagonal(Db_sqrt[1:r]) * U
-            A2 = Diagonal(sqrt.(D)) * inv(Diagonal(Db_sqrt[1:r])) * P_r'
+            d_tol = max(eps(FT) * length(Db_sqrt) * maximum(Db_sqrt), FT(1e-12) * maximum(Db_sqrt))
+            d_safe = max.(Db_sqrt[1:r], d_tol)
+            A2 = Diagonal(sqrt.(max.(D, zero(FT)))) * Diagonal(1 ./ d_safe) * P_r'
             Z_hat = A1 * (A2 * Zb)
             m_new = dropout_optimization_mean(eki, forward, m_hat, Z_hat, Σ_y_n)
             θ_new = m_new .+ Z_hat * sqrt(eki.N_ens - 1)
@@ -252,7 +311,7 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
         temp = Σ_y_sqrt_n \ Yb
         eig = eigen(Symmetric(temp' * temp))
         P, D = eig.vectors, eig.values
-        T = P * inv(sqrt.(I + Diagonal(D))) * P'
+        T = P * Diagonal(1 ./ sqrt.(max.(1 .+ D, eps(FT)))) * P'
         Z_hat = Zb * T
         m_hat = mn .+ reshape(K * (eki.y .- vec(x_mean_bar)), :, 1)
         m_new = dropout_optimization_mean(eki, forward, m_hat, Z_hat, Σ_y_n)
@@ -271,11 +330,13 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
             P_r = P[:,1:r]
             V_r = V[:,1:r]
             temp = Σ_y_sqrt_n \ Yb
-            S = Symmetric(V_r' * inv(I + temp' * temp) * V_r)   # r × r
+            S = Symmetric(V_r' * ((I + temp' * temp) \ V_r))   # r × r
             eig = eigen(S)
             U, D = eig.vectors, eig.values
             A1 = P_r * Diagonal(Db_sqrt[1:r]) * U
-            A2 = Diagonal(sqrt.(D)) * inv(Diagonal(Db_sqrt[1:r])) * P_r'
+            d_tol = max(eps(FT) * length(Db_sqrt) * maximum(Db_sqrt), FT(1e-12) * maximum(Db_sqrt))
+            d_safe = max.(Db_sqrt[1:r], d_tol)
+            A2 = Diagonal(sqrt.(max.(D, zero(FT)))) * Diagonal(1 ./ d_safe) * P_r'
             θ_new = A1 * (A2 * (θb .- mn)) .+ mn1
         end
 
@@ -284,12 +345,17 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
         temp = Σ_y_sqrt_n \ Yb
         eig = eigen(Symmetric(temp' * temp))
         P, D = eig.vectors, eig.values
-        T = P * inv(sqrt.(I + Diagonal(D))) * P'
+        T = P * Diagonal(1 ./ sqrt.(max.(1 .+ D, eps(FT)))) * P'
         mn1 = mn .+ reshape(K * (eki.y .- vec(x_mean_bar)), :, 1)
         Z_new = Zb * T
         θ_new = mn1 .+ Z_new * sqrt(eki.N_ens - 1)
     else
         error("Unknown filter_type: $(filter_type)")
+    end
+
+    if any(x -> !isfinite(x), θ_new)
+        @warn "Non-finite ensemble update detected; reverting to previous ensemble" filter_type=filter_type
+        θ_new = copy(θ_prev)
     end
 
     size(θ_new) == size(θ_prev) || error("θ_new has size $(size(θ_new)), expected $(size(θ_prev))")
@@ -305,7 +371,11 @@ function EKI_Run(forward::Function, θ0::Array{FT,2}, Σ_y::Array{FT,2}, y::Arra
                  dropout_deviation_Δτ::Union{Nothing,FT}=nothing,
                  dropout_mean_Δτ::Union{Nothing,FT}=nothing,
                  dropout_linearization_bound::FT=FT(Inf)) where FT<:AbstractFloat
-    N_y = size(y, 1)    
+    N_y = size(y, 1)
+    size(θ0, 2) > 1 || error("Need at least 2 ensemble members")
+    if inflation && !(0 < Δτ < 1)
+        error("Δτ must satisfy 0 < Δτ < 1 when inflation is enabled")
+    end
     dropout_deviation_Δτ_actual = isnothing(dropout_deviation_Δτ) ? Δτ : dropout_deviation_Δτ
     dropout_mean_Δτ_actual = isnothing(dropout_mean_Δτ) ? Δτ : dropout_mean_Δτ
 
