@@ -1,5 +1,4 @@
 using LinearAlgebra, Random, Statistics, Distributions
-
 mutable struct EKIObj{FT<:AbstractFloat, IT<:Int}
     # Type of ensemble Kalman inversion: "EKI", "ETKI", "EAKI", "DEKI"
     filter_type::String
@@ -56,35 +55,31 @@ function active_svd_rank(s::AbstractVector{FT}) where FT<:AbstractFloat
     return isnothing(r) ? 0 : r
 end
 
-function dropout_optimization_mean(eki::EKIObj, forward::Function, m_hat::Array{FT,2},
-                                   Z_hat::Array{FT,2}, Σ_y::Array{FT,2}) where FT<:AbstractFloat
+function dropout_optimization_mean(eki::EKIObj, forward::Function, mn::Array{FT,2},
+                                   Zb::Array{FT,2}, Yb::Array{FT,2}, Σ_y::Array{FT,2}) where FT<:AbstractFloat
     dropout_λ = 1 - eki.dropout_rate
     0 < dropout_λ <= 1 || error("dropout_rate must satisfy 0 <= dropout_rate < 1")
-
-    θ_hat = m_hat .+ Z_hat * sqrt(eki.N_ens - 1)
-    x_hat = forward(θ_hat)
-    x_hat_mean = mean(x_hat, dims=2)
-    Y_hat = (x_hat .- x_hat_mean) ./ sqrt(eki.N_ens - 1)
 
     ρ = rand(Bernoulli(dropout_λ), eki.N_θ)
     while sum(ρ) == 0
         ρ = rand(Bernoulli(dropout_λ), eki.N_θ)
     end
-    Z_tilde = reshape(ρ, :, 1) .* Z_hat
+    Z_tilde = reshape(ρ, :, 1) .* Zb
 
-    θ_tilde = m_hat .+ Z_tilde * sqrt(eki.N_ens - 1)
+    θ_tilde = mn .+ Zb * sqrt(eki.N_ens - 1)
     x_tilde = forward(θ_tilde)
     x_tilde_mean = mean(x_tilde, dims=2)
     Y_tilde = (x_tilde .- x_tilde_mean) ./ sqrt(eki.N_ens - 1)
     x_tilde_m_n = forward(m_hat)
+    # x_tilde_m_n = copy(x_tilde_mean)
 
-    L = pinv(Y_hat' * (Σ_y \ Y_hat)) * (Y_hat' * (Σ_y \ Y_tilde))
-    Z_tilde_⊥ = Z_tilde - Z_hat * L
-    Y_tilde_⊥ = Y_tilde - Y_hat * L
+    L = pinv(Yb' * (Σ_y \ Yb)) * (Yb' * (Σ_y \ Y_tilde))
+    Z_tilde_⊥ = Z_tilde - Zb * L
+    Y_tilde_⊥ = Y_tilde - Yb * L
 
-    m_new = m_hat .+ reshape((Z_tilde_⊥ * Y_tilde_⊥') *
+    Δm = reshape((Z_tilde_⊥ * Y_tilde_⊥') *
                              ((Y_tilde_⊥ * Y_tilde_⊥' + Σ_y) \ (eki.y .- x_tilde_m_n)), :, 1)
-    return reshape(m_new, :, 1)
+    return Δm
 end
 
 function dropout_mask(eki::EKIObj{FT}) where FT<:AbstractFloat
@@ -164,6 +159,7 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
     Yb = (xb .- xbar) ./ sqrt(eki.N_ens - 1)
 
     Σ_y_n = Σ_y_sqrt_n * Σ_y_sqrt_n'
+    Σ_y = eki.Σ_y_sqrt * eki.Σ_y_sqrt'
 
     Cθx = Zb * Yb'
     Cxx = Yb * Yb' + Σ_y_n
@@ -187,7 +183,7 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
         θ_hat = θb + K * (y_obs .- xb)
         m_hat = mean(θ_hat, dims=2)
         Z_hat = (θ_hat .- m_hat) ./ sqrt(eki.N_ens - 1)
-        m_new = dropout_optimization_mean(eki, forward, m_hat, Z_hat, Σ_y_n)
+        m_new = dropout_optimization_mean(eki, forward, mn, Zb, Yb, Σ_y_n)
         θ_new = m_new .+ Z_hat * sqrt(eki.N_ens - 1)
 
     elseif filter_type == "DEKI"
@@ -213,7 +209,7 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
             Cxx_tilde = Y_tilde * Y_tilde'
 
             mn1 = mn .+ reshape(h_tilde_n * Cθx_tilde *
-                                 ((Σ_y_n + h_tilde_n * Cxx_tilde) \ (eki.y .- vec(x_mean_bar))), :, 1)
+                                 ((Σ_y + h_tilde_n * Cxx_tilde) \ (eki.y .- vec(x_mean_bar))), :, 1)
             # mn1 = mn .+ reshape(h_tilde_n * Cθx_tilde *
             #                      ((Σ_y_n + h_tilde_n * Cxx_tilde) \ (eki.y .- mean(x_tilde, dims=2))), :, 1)
 
@@ -222,7 +218,7 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
             G_T = deki_linearized_observation_deviations(T, Y_linear, eki.dropout_linearization_bound)
             Cθx_linear = (T * G_T') ./ (eki.N_ens - 1)
             Cxx_linear = (G_T * G_T') ./ (eki.N_ens - 1)
-            T_new = T - h_n * Cθx_linear * ((Σ_y_n + h_n * Cxx_linear) \ G_T)
+            T_new = T - h_n * Cθx_linear * ((Σ_y + h_n * Cxx_linear) \ G_T)
             θ_new = mn1 .+ T_new
         end
 
@@ -240,10 +236,11 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
             S = Symmetric(V_r' * inv(I + temp' * temp) * V_r)
             eig = eigen(S)
             U, D = eig.vectors, eig.values
+            D .= max.(D, eps(Float64))  # Ensure non-negative eigenvalues
             A1 = P_r * Diagonal(Db_sqrt[1:r]) * U
             A2 = Diagonal(sqrt.(D)) * inv(Diagonal(Db_sqrt[1:r])) * P_r'
             Z_hat = A1 * (A2 * Zb)
-            m_new = dropout_optimization_mean(eki, forward, m_hat, Z_hat, Σ_y_n)
+            m_new = m_hat + dropout_optimization_mean(eki, forward, mn, Zb, Yb, Σ_y_n) 
             θ_new = m_new .+ Z_hat * sqrt(eki.N_ens - 1)
         end
 
@@ -255,7 +252,7 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
         T = P * inv(sqrt.(I + Diagonal(D))) * P'
         Z_hat = Zb * T
         m_hat = mn .+ reshape(K * (eki.y .- vec(x_mean_bar)), :, 1)
-        m_new = dropout_optimization_mean(eki, forward, m_hat, Z_hat, Σ_y_n)
+        m_new = m_hat + dropout_optimization_mean(eki, forward, mn, Zb, Yb, Σ_y_n) 
         θ_new = m_new .+ Z_hat * sqrt(eki.N_ens - 1)
 
     
