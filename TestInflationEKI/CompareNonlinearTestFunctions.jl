@@ -6,29 +6,26 @@ using Statistics
 ENV["MPLBACKEND"] = get(ENV, "MPLBACKEND", "Agg")
 
 using PyPlot
-using Optimization
-using OptimizationCMAEvolutionStrategy
 
 include(joinpath(@__DIR__, "..", "Inversion", "InflationEKI.jl"))
+include(joinpath(@__DIR__, "..", "Inversion", "CMAES.jl"))
 include(joinpath(@__DIR__, "NonlinearFunctions.jl"))
 
 # Main knobs. Change these before running the script.
-const TEST_FUNCTION_NAMES = ["rosenbrock", "rastrigin"] # ["weakly_nonlinear", "rastrigin", "rosenbrock"]
+const TEST_FUNCTION_NAMES = ["monotone_cubic", "paired_rosenbrock", "rastrigin"]
 const THETA_DIM = 100
 const N_ENS = 50
 const MAX_EVAL = 100 * (2 * N_ENS + 2)
 const N_GRID = 200
 const INFLATION_DT = 0.5
 const DROPOUT_RATE = 0.5
-const INITIAL_STD = 3.0
+const INITIAL_STD = 1.0
 const NEAR_ZERO_TOL = 0.2
 const SEED = 1234
 const OUTPUT_DIR = joinpath(@__DIR__, "Figs")
 
 const EKI_DT_KEY = Symbol(Char(0x0394), Char(0x03c4))
 const EKI_THETA_FIELDS = (Symbol("theta"), Symbol(Char(0x03b8)), Symbol(Char(0x80c3)))
-const CMAES = OptimizationCMAEvolutionStrategy.CMAEvolutionStrategy
-
 Base.@kwdef struct NonlinearComparisonConfig
     function_names::Vector{String} = copy(TEST_FUNCTION_NAMES)
     theta_dim::Int = THETA_DIM
@@ -38,6 +35,10 @@ Base.@kwdef struct NonlinearComparisonConfig
     inflation_dt::Float64 = INFLATION_DT
     dropout_rate::Float64 = DROPOUT_RATE
     initial_std::Float64 = INITIAL_STD
+    rastrigin_initial_center::Float64 = 1.0
+    rastrigin_initial_half_width::Float64 = 4.0
+    paired_rosenbrock_initial_std::Float64 = 0.3
+    joint_dropout_weight::Float64 = 1.0
     near_zero_tol::Float64 = NEAR_ZERO_TOL
     seed::Int = SEED
     output_dir::String = OUTPUT_DIR
@@ -68,12 +69,28 @@ end
 positive_for_log(x) = max.(x, eps(Float64))
 slug(name::String) = replace(lowercase(name), r"[^a-z0-9]+" => "-")
 
+const PROBLEM_SEED_OFFSETS = Dict(
+    "monotone_cubic" => 1000,
+    "paired_rosenbrock" => 2000,
+    "rastrigin" => 3000,
+    "rotated_rastrigin" => 4000,
+    "rosenbrock" => 5000,
+    "weakly_nonlinear" => 6000,
+)
+
+problem_seed(base_seed::Int, name::String) =
+    base_seed + get(PROBLEM_SEED_OFFSETS, name) do
+        error("No stable seed offset registered for $(name)")
+    end
+
 function plot_window(args::NamedTuple)
     if args.name == "rastrigin"
         return ((-5.12, 5.12), (-5.12, 5.12))
-    elseif args.name == "rosenbrock"
-        return ((-3.0, 3.0), (-2.0, 10.0))
-    elseif args.name == "weakly_nonlinear"
+    elseif args.name == "rotated_rastrigin"
+        return ((-5.12, 5.12), (-5.12, 5.12))
+    elseif args.name in ("rosenbrock", "paired_rosenbrock")
+        return ((-2.0, 2.0), (-1.0, 3.0))
+    elseif args.name in ("weakly_nonlinear", "monotone_cubic")
         radius = 3.0
         return (
             (args.ref_theta[1] - radius, args.ref_theta[1] + radius),
@@ -105,9 +122,14 @@ function normalized_density_heatmap(args, theta_dim::Int, n_grid::Int)
 end
 
 function initial_ensemble(args::NamedTuple, cfg::NonlinearComparisonConfig, rng::AbstractRNG)
-    if args.name == "rastrigin"
-        xlim, _ = plot_window(args)
-        return xlim[1] .+ (xlim[2] - xlim[1]) .* rand(rng, cfg.theta_dim, cfg.n_ens)
+    if args.name in ("rastrigin", "rotated_rastrigin")
+        lower = cfg.rastrigin_initial_center - cfg.rastrigin_initial_half_width
+        width = 2 * cfg.rastrigin_initial_half_width
+        return lower .+ width .* rand(rng, cfg.theta_dim, cfg.n_ens)
+    elseif args.name == "paired_rosenbrock"
+        theta_center = repeat([-1.2, 1.0], div(cfg.theta_dim, 2))
+        return theta_center .+
+               cfg.paired_rosenbrock_initial_std .* randn(rng, cfg.theta_dim, cfg.n_ens)
     end
     return cfg.initial_std .* randn(rng, cfg.theta_dim, cfg.n_ens)
 end
@@ -152,11 +174,15 @@ function objective_context(problem::NonlinearComparisonProblem)
     return (; residual, phi)
 end
 
-function evals_per_iteration(method::String, n_ens::Int)
-    if method == "dropout-EAKI" || method == "dropout-ETKI"
-        return 2 * n_ens + 2
-    elseif method == "DEKI"
+function minimum_evals_per_iteration(method::String, n_ens::Int)
+    if method == "EAKI"
         return n_ens + 1
+    elseif method == "dropout-EAKI-sequential"
+        return 2 * n_ens + 2
+    elseif method == "dropout-EAKI-joint"
+        return 2 * n_ens + 1
+    elseif method == "DEKI"
+        return 2 * n_ens + 1
     elseif method == "CMA-ES"
         return n_ens
     end
@@ -164,12 +190,8 @@ function evals_per_iteration(method::String, n_ens::Int)
 end
 
 function iterations_for_eval_budget(method::String, cfg::NonlinearComparisonConfig)
-    return fld(cfg.max_eval, evals_per_iteration(method, cfg.n_ens))
-end
-
-function evaluation_axis_for_history(method::String, n_ens::Int, n_hist::Int)
-    step = evals_per_iteration(method, n_ens)
-    return collect(0:step:step * (n_hist - 1))
+    remaining = max(cfg.max_eval - cfg.n_ens, 0)
+    return fld(remaining, minimum_evals_per_iteration(method, cfg.n_ens))
 end
 
 function ensemble_history(source, theta_dim::Int)
@@ -190,24 +212,74 @@ function ensemble_history(source, theta_dim::Int)
     error("Cannot determine ensemble orientation for theta size $(size(theta[1]))")
 end
 
-function objective_curve_from_ensembles(history, phi::Function)
-    representative_points = [vec(mean(theta, dims=2)) for theta in history]
-    objective_values = [phi(theta_mean) for theta_mean in representative_points]
-    covariance_norm = [norm(ensemble_covariance(theta)) for theta in history]
-    return (; objective_values, covariance_norm, representative_points)
+mutable struct ForwardTracker
+    evaluations::Int
+    best_value::Float64
+    best_point::Vector{Float64}
+end
+
+ForwardTracker(theta_dim::Int) = ForwardTracker(0, Inf, zeros(theta_dim))
+
+function observation_objective(problem::NonlinearComparisonProblem, prediction::AbstractVector)
+    residual = prediction - problem.y
+    return 0.5 * dot(residual, problem.sigma_y \ residual)
+end
+
+function tracked_forward(problem::NonlinearComparisonProblem, tracker::ForwardTracker,
+                         theta::AbstractArray)
+    theta_matrix = ndims(theta) == 1 ? reshape(theta, :, 1) : theta
+    predictions = Matrix{Float64}(undef, length(problem.y), size(theta_matrix, 2))
+    for j in axes(theta_matrix, 2)
+        point = Vector{Float64}(view(theta_matrix, :, j))
+        prediction = problem.forward(point)
+        predictions[:, j] = prediction
+        value = observation_objective(problem, prediction)
+        tracker.evaluations += 1
+        if value < tracker.best_value
+            tracker.best_value = value
+            tracker.best_point = point
+        end
+    end
+    return predictions
 end
 
 count_near_zero_dimensions(theta::AbstractVector, tol::Real) = count(abs.(theta) .<= tol)
 
 function run_eki_method(problem::NonlinearComparisonProblem, ctx, cfg::NonlinearComparisonConfig,
-        filter_type::String, label::String, seed::Int)
+        filter_type::String, label::String, seed::Int;
+        correction_mode::String="sequential")
     Random.seed!(seed)
 
     inflation = (filter_type != "DEKI")
-    n_iter = iterations_for_eval_budget(filter_type, cfg)
+    budget_name = filter_type == "dropout-EAKI" ?
+        "dropout-EAKI-$(correction_mode)" : filter_type
+    n_iter = iterations_for_eval_budget(budget_name, cfg)
+    tracker = ForwardTracker(problem.theta_dim)
+    counted_forward(theta) = tracked_forward(problem, tracker, theta)
+
+    evaluation_history = Int[]
+    best_value_history = Float64[]
+    best_point_history = Vector{Float64}[]
+    mean_point_history = Vector{Float64}[]
+    mean_value_history = Float64[]
+    covariance_history = Float64[]
+    ensemble_history_at_callback = Matrix{Float64}[]
+
+    function record_iteration(obj, iteration)
+        ensemble = copy(obj.θ[end])
+        mean_point = vec(mean(ensemble, dims=2))
+        push!(evaluation_history, tracker.evaluations)
+        push!(best_value_history, tracker.best_value)
+        push!(best_point_history, copy(tracker.best_point))
+        push!(mean_point_history, mean_point)
+        push!(mean_value_history, ctx.phi(mean_point))
+        push!(covariance_history, norm(ensemble_covariance(ensemble)))
+        push!(ensemble_history_at_callback, ensemble)
+        return nothing
+    end
 
     ekiobj = EKI_Run(
-        problem.forward,
+        counted_forward,
         copy(problem.theta0),
         problem.sigma_y,
         problem.y;
@@ -216,26 +288,38 @@ function run_eki_method(problem::NonlinearComparisonProblem, ctx, cfg::Nonlinear
         N_iter=n_iter,
         dropout_rate=cfg.dropout_rate,
         inflation=inflation,
+        forward_parallel=true,
+        dropout_correction_mode=correction_mode,
+        joint_dropout_weight=cfg.joint_dropout_weight,
+        iteration_callback=record_iteration,
     )
 
-    history = ensemble_history(ekiobj, problem.theta_dim)
-    curves = objective_curve_from_ensembles(history, ctx.phi)
-    evaluation_axis = evaluation_axis_for_history(filter_type, cfg.n_ens, length(history))
-    final_mean_point = curves.representative_points[end]
+    valid = findall(<=(cfg.max_eval), evaluation_history)
+    isempty(valid) && error("Forward budget is smaller than the initial ensemble cost")
+    last_valid = valid[end]
+    evaluation_axis = evaluation_history[valid]
+    best_values = best_value_history[valid]
+    best_points = best_point_history[valid]
+    mean_points = mean_point_history[valid]
+    mean_values = mean_value_history[valid]
+    covariance_norm = covariance_history[valid]
+    final_points = ensemble_history_at_callback[last_valid]
+    final_mean_point = mean_points[end]
     return (;
         label,
-        method=filter_type,
-        n_iter,
+        method=budget_name,
+        n_iter=last_valid - 1,
         max_eval=cfg.max_eval,
-        evals_per_iteration=evals_per_iteration(filter_type, cfg.n_ens),
+        evals_per_iteration=minimum_evals_per_iteration(budget_name, cfg.n_ens),
         final_mean_point,
         near_zero_count=count_near_zero_dimensions(final_mean_point, cfg.near_zero_tol),
         near_zero_tol=cfg.near_zero_tol,
         object=ekiobj,
-        final_points=history[end],
-        representative_points=curves.representative_points,
-        optimization_error=curves.objective_values,
-        covariance_norm=curves.covariance_norm,
+        final_points,
+        representative_points=best_points,
+        optimization_error=best_values,
+        mean_optimization_error=mean_values,
+        covariance_norm,
         x_axis=evaluation_axis,
     )
 end
@@ -247,78 +331,60 @@ end
 
 function run_cma_es(problem::NonlinearComparisonProblem, ctx, cfg::NonlinearComparisonConfig, seed::Int)
     x0 = vec(mean(problem.theta0, dims=2))
-    n_iter = iterations_for_eval_budget("CMA-ES", cfg)
-    evaluation_count = Ref(0)
+    n_iter = max(fld(cfg.max_eval - 1, cfg.n_ens), 0)
+    tracker = ForwardTracker(problem.theta_dim)
     function objective(x)
-        value = ctx.phi(Vector{Float64}(x))
-        evaluation_count[] += 1
-        return value
+        prediction = tracked_forward(problem, tracker, Vector{Float64}(x))
+        return observation_objective(problem, vec(prediction))
     end
 
-    best_values = Float64[ctx.phi(x0)]
-    best_points = Vector{Float64}[copy(x0)]
-    covariance_norm = Float64[sqrt(problem.theta_dim) * cfg.initial_std^2]
-    evaluation_axis = Int[0]
-    final_population = copy(problem.theta0)
-
-    function callback(opt, y, fvals, perm)
-        push!(best_points, Vector{Float64}(CMAES.xbest(opt)))
-        push!(best_values, CMAES.fbest(opt))
-
-        population = Matrix{Float64}(CMAES.compute_input(opt.p, y))
-        final_population = population
-        push!(covariance_norm, covariance_norm_from_columns(population))
-        push!(evaluation_axis, evaluation_count[])
-        return nothing
-    end
-
-    opt = CMAES.minimize(
-        objective,
-        x0,
-        cfg.initial_std;
+    coordinate_variance = vec(var(problem.theta0, dims=2, corrected=true))
+    sigma0 = sqrt(mean(coordinate_variance))
+    result = run_cmaes(
+        objective, x0;
+        sigma0=sigma0,
         popsize=cfg.n_ens,
-        maxiter=n_iter,
-        seed=UInt(seed),
-        verbosity=0,
-        callback=callback,
+        max_iter=n_iter,
+        seed=seed,
     )
 
-    if evaluation_count[] > evaluation_axis[end]
-        push!(best_points, Vector{Float64}(CMAES.xbest(opt)))
-        push!(best_values, CMAES.fbest(opt))
-        push!(covariance_norm, covariance_norm[end])
-        push!(evaluation_axis, evaluation_count[])
-    elseif best_values[end] != CMAES.fbest(opt)
-        best_points[end] = Vector{Float64}(CMAES.xbest(opt))
-        best_values[end] = CMAES.fbest(opt)
-    end
-
-    final_mean_point = vec(mean(final_population, dims=2))
+    evaluation_axis = [1 + (i - 1) * cfg.n_ens for i in eachindex(result.best_f_history)]
+    valid = findall(<=(cfg.max_eval), evaluation_axis)
+    best_values = result.best_f_history[valid]
+    best_points = result.best_history[valid]
+    covariance_norm = result.covariance_history[valid]
+    mean_points = result.means[valid]
+    mean_values = [ctx.phi(point) for point in mean_points]
+    final_mean_point = mean_points[end]
     return (;
         label="CMA-ES",
         method="CMA-ES",
-        n_iter,
+        n_iter=length(valid) - 1,
         max_eval=cfg.max_eval,
-        evals_per_iteration=evals_per_iteration("CMA-ES", cfg.n_ens),
+        evals_per_iteration=cfg.n_ens,
         final_mean_point,
         near_zero_count=count_near_zero_dimensions(final_mean_point, cfg.near_zero_tol),
         near_zero_tol=cfg.near_zero_tol,
-        object=opt,
-        final_points=final_population,
+        object=result,
+        final_points=reshape(copy(result.best_x), :, 1),
         representative_points=best_points,
         optimization_error=best_values,
+        mean_optimization_error=mean_values,
         covariance_norm,
-        x_axis=evaluation_axis,
+        x_axis=evaluation_axis[valid],
     )
 end
 
 function run_problem_comparison(problem::NonlinearComparisonProblem, cfg::NonlinearComparisonConfig, seed::Int)
     ctx = objective_context(problem)
     runs = NamedTuple[]
-    push!(runs, run_eki_method(problem, ctx, cfg, "dropout-EAKI", "dropout EAKI", seed + 1))
-    push!(runs, run_eki_method(problem, ctx, cfg, "dropout-ETKI", "dropout ETKI", seed + 2))
-    push!(runs, run_eki_method(problem, ctx, cfg, "DEKI", "DEKI", seed + 3))
-    push!(runs, run_cma_es(problem, ctx, cfg, seed + 4))
+    push!(runs, run_eki_method(problem, ctx, cfg, "EAKI", "Inflation EAKI", seed))
+    push!(runs, run_eki_method(problem, ctx, cfg, "dropout-EAKI",
+        "Sequential projected dropout EAKI", seed + 1; correction_mode="sequential"))
+    push!(runs, run_eki_method(problem, ctx, cfg, "dropout-EAKI",
+        "Joint projected EAKI", seed + 1; correction_mode="joint"))
+    push!(runs, run_eki_method(problem, ctx, cfg, "DEKI", "DEKI", seed + 1))
+    push!(runs, run_cma_es(problem, ctx, cfg, seed + 1))
     return runs
 end
 
@@ -404,15 +470,17 @@ function default_output_file(cfg::NonlinearComparisonConfig)
 end
 
 function plot_comparison(problems, results::Dict{String, Vector{NamedTuple}}, output_file::String)
-    fig, axs = PyPlot.subplots(length(problems), 3;
-        figsize=(18, 4.8 * length(problems)), squeeze=false)
+    fig, axs = PyPlot.subplots(length(problems), 4;
+        figsize=(23, 4.8 * length(problems)), squeeze=false)
 
     for (row, problem) in enumerate(problems)
         runs = results[problem.name]
         plot_heatmap_and_final_points!(axs[row, 1], problem, runs)
         plot_curve_panel!(axs[row, 2], runs, :optimization_error,
-            "optimization error", "Phi(theta)")
-        plot_curve_panel!(axs[row, 3], runs, :covariance_norm,
+            "best evaluated objective", "best Phi(theta)")
+        plot_curve_panel!(axs[row, 3], runs, :mean_optimization_error,
+            "ensemble/distribution mean objective", "Phi(mean)")
+        plot_curve_panel!(axs[row, 4], runs, :covariance_norm,
             "covariance norm", "||Cov(points)||_F")
     end
 
@@ -429,11 +497,12 @@ function run_nonlinear_test_function_comparison(
     results = Dict{String, Vector{NamedTuple}}()
     near_zero_reports = Dict{String, Vector{NamedTuple}}()
 
-    for (index, name) in enumerate(cfg.function_names)
-        problem = make_nonlinear_problem(name, cfg, cfg.seed + 1000 * index)
+    for name in cfg.function_names
+        seed = problem_seed(cfg.seed, name)
+        problem = make_nonlinear_problem(name, cfg, seed)
         @info "Running nonlinear test-function comparison" function_name=problem.name dim=problem.theta_dim max_eval=cfg.max_eval n_ens=cfg.n_ens
         push!(problems, problem)
-        runs = run_problem_comparison(problem, cfg, cfg.seed + 1000 * index)
+        runs = run_problem_comparison(problem, cfg, seed)
         results[problem.name] = runs
         near_zero_reports[problem.name] = near_zero_dimension_summary(problem, runs)
         report_near_zero_dimensions(problem, runs)

@@ -10,7 +10,7 @@ mutable struct EKIObj{FT<:AbstractFloat, IT<:Int}
     # Observed data vector
     y::Array{FT,1}
     # Lower triangular sqrt of observation covariance
-    Σ_y_sqrt::LowerTriangular{FT,Matrix{FT}}
+    Σ_y_sqrt::LowerTriangular{FT}
     # Ensemble size
     N_ens::IT
     # Parameter dimension
@@ -29,13 +29,19 @@ mutable struct EKIObj{FT<:AbstractFloat, IT<:Int}
     dropout_mean_Δτ::FT
     # Singular-value truncation bound M_G in Algorithm 2.1 of dropout EKI
     dropout_linearization_bound::FT
+    # Projected dropout mean update: "sequential" or "joint"
+    dropout_correction_mode::String
+    # Relative weight of the complementary block in the joint reduced model
+    joint_dropout_weight::FT
 end
 
 # Constructor
 function EKIObj(filter_type::String, θ0::Array{FT,2}, y_pred_0::Array{FT,2}, y0::Array{FT,1}, 
                         Σ_y::Array{FT,2}, Δτ::FT, dropout_rate::FT=FT(0.5), inflation::Bool=true,
                         dropout_deviation_Δτ::FT=Δτ, dropout_mean_Δτ::FT=Δτ,
-                        dropout_linearization_bound::FT=FT(Inf)) where FT<:AbstractFloat
+                        dropout_linearization_bound::FT=FT(Inf),
+                        dropout_correction_mode::String="sequential",
+                        joint_dropout_weight::FT=one(FT)) where FT<:AbstractFloat
     θ = [θ0]
     y_pred = [y_pred_0]
 
@@ -59,8 +65,13 @@ function EKIObj(filter_type::String, θ0::Array{FT,2}, y_pred_0::Array{FT,2}, y0
         Σ_y_sqrt = LowerTriangular(cholesky(Symmetric(Σ_y_reg)).L)
     end
 
+    dropout_correction_mode in ("sequential", "joint") ||
+        error("dropout_correction_mode must be sequential or joint")
+    joint_dropout_weight > 0 || error("joint_dropout_weight must be positive")
+
     obj = EKIObj(filter_type, θ, y_pred, y0, Σ_y_sqrt, N_ens, N_θ, N_y, Δτ, dropout_rate, inflation,
-                 dropout_deviation_Δτ, dropout_mean_Δτ, dropout_linearization_bound)
+                 dropout_deviation_Δτ, dropout_mean_Δτ, dropout_linearization_bound,
+                 dropout_correction_mode, joint_dropout_weight)
     return obj
 end
 
@@ -110,30 +121,49 @@ function safe_diag_inv(d::AbstractVector{FT}) where FT<:AbstractFloat
     return [abs(x) > tol ? inv(x) : zero(FT) for x in d]
 end
 
-function dropout_optimization_mean(eki::EKIObj, forward::Function, mn::Array{FT,2}, m_hat::Array{FT,2},
-                                   Zb::Array{FT,2}, Yb::Array{FT,2}, Σ_y::Array{FT,2}) where FT<:AbstractFloat
-    dropout_λ = 1 - eki.dropout_rate
-    0 < dropout_λ <= 1 || error("dropout_rate must satisfy 0 <= dropout_rate < 1")
+function projected_dropout_components(eki::EKIObj, forward::Function,
+                                      center::Array{FT,2}, Zb::Array{FT,2},
+                                      Yb::Array{FT,2}, Σ_y::Array{FT,2}) where FT<:AbstractFloat
+    ρ = dropout_mask(eki)
+    Z_tilde = ρ .* Zb
 
-    ρ = rand(Bernoulli(dropout_λ), eki.N_θ)
-    while sum(ρ) == 0
-        ρ = rand(Bernoulli(dropout_λ), eki.N_θ)
-    end
-    Z_tilde = reshape(ρ, :, 1) .* Zb
-
-    θ_tilde = m_hat .+ Z_tilde * sqrt(eki.N_ens - 1)
+    θ_tilde = center .+ Z_tilde * sqrt(eki.N_ens - 1)
     x_tilde = forward(θ_tilde)
     x_tilde_mean = mean(x_tilde, dims=2)
     Y_tilde = (x_tilde .- x_tilde_mean) ./ sqrt(eki.N_ens - 1)
-    x_tilde_m_n = forward(m_hat)
 
     L = _safe_pinv(Yb' * stable_solve(Σ_y, Yb)) * (Yb' * stable_solve(Σ_y, Y_tilde))
     Z_tilde_⊥ = Z_tilde - Zb * L
     Y_tilde_⊥ = Y_tilde - Yb * L
 
+    return Z_tilde_⊥, Y_tilde_⊥, x_tilde_mean
+end
+
+function dropout_optimization_mean(eki::EKIObj, forward::Function, m_hat::Array{FT,2},
+                                   Zb::Array{FT,2}, Yb::Array{FT,2},
+                                   Σ_y::Array{FT,2}) where FT<:AbstractFloat
+    Z_tilde_⊥, Y_tilde_⊥, _ =
+        projected_dropout_components(eki, forward, m_hat, Zb, Yb, Σ_y)
+    x_tilde_m_n = forward(m_hat)
+
     Δm = reshape((Z_tilde_⊥ * Y_tilde_⊥') *
                  stable_solve(Y_tilde_⊥ * Y_tilde_⊥' + Σ_y, eki.y .- x_tilde_m_n), :, 1)
-    return Δm
+    return m_hat .+ Δm
+end
+
+function joint_projected_dropout_mean(eki::EKIObj, forward::Function,
+                                      mn::Array{FT,2}, x_mn::AbstractArray{FT},
+                                      Zb::Array{FT,2}, Yb::Array{FT,2},
+                                      Σ_y::Array{FT,2}) where FT<:AbstractFloat
+    Z_tilde_⊥, Y_tilde_⊥, _ =
+        projected_dropout_components(eki, forward, mn, Zb, Yb, Σ_y)
+    weight = sqrt(eki.joint_dropout_weight)
+    Z_aug = hcat(Zb, weight .* Z_tilde_⊥)
+    Y_aug = hcat(Yb, weight .* Y_tilde_⊥)
+    Cθx_aug = Z_aug * Y_aug'
+    Cxx_aug = Y_aug * Y_aug'
+    return mn .+ reshape(Cθx_aug *
+        stable_solve(Cxx_aug + Σ_y, eki.y .- vec(x_mn)), :, 1)
 end
 
 function dropout_mask(eki::EKIObj{FT}) where FT<:AbstractFloat
@@ -222,7 +252,6 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
     # Kalman gain (SVD-based pseudo-inverse for robustness on rank-deficient
     # or ill-conditioned sample covariances)
     K = Cθx * _safe_pinv(Cxx)
-
     # --- Analysis step based on filter_type ---
     if filter_type == "EKI" || filter_type == "NF-EKI"
     
@@ -239,7 +268,7 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
         θ_hat = θb + K * (y_obs .- xb)
         m_hat = mean(θ_hat, dims=2)
         Z_hat = (θ_hat .- m_hat) ./ sqrt(eki.N_ens - 1)
-        m_new = dropout_optimization_mean(eki, forward, mn, m_hat, Zb, Yb, Σ_y_n)
+        m_new = dropout_optimization_mean(eki, forward, m_hat, Zb, Yb, Σ_y_n)
         θ_new = m_new .+ Z_hat * sqrt(eki.N_ens - 1)
 
     elseif filter_type == "DEKI"
@@ -299,7 +328,12 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
             d_safe = max.(Db_sqrt[1:r], d_tol)
             A2 = Diagonal(sqrt.(max.(D, zero(FT)))) * Diagonal(1 ./ d_safe) * P_r'
             Z_hat = A1 * (A2 * Zb)
-            m_new = m_hat + dropout_optimization_mean(eki, forward, mn, m_hat, Zb, Yb, Σ_y_n)
+            if eki.dropout_correction_mode == "joint"
+                m_new = joint_projected_dropout_mean(
+                    eki, forward, mn, x_mean_bar, Zb, Yb, Σ_y_n)
+            else
+                m_new = dropout_optimization_mean(eki, forward, m_hat, Zb, Yb, Σ_y_n)
+            end
             θ_new = m_new .+ Z_hat * sqrt(eki.N_ens - 1)
         end
 
@@ -311,7 +345,9 @@ function update_ensemble!(eki::EKIObj{FT}, forward::Function) where FT<:Abstract
         T = P * Diagonal(1 ./ sqrt.(max.(1 .+ D, eps(FT)))) * P'
         Z_hat = Zb * T
         m_hat = mn .+ reshape(K * (eki.y .- vec(x_mean_bar)), :, 1)
-        m_new = m_hat + dropout_optimization_mean(eki, forward, mn, m_hat, Zb, Yb, Σ_y_n)
+        eki.dropout_correction_mode == "joint" &&
+            error("joint dropout correction is currently implemented only for dropout-EAKI")
+        m_new = dropout_optimization_mean(eki, forward, m_hat, Zb, Yb, Σ_y_n)
         θ_new = m_new .+ Z_hat * sqrt(eki.N_ens - 1)
 
     
@@ -367,7 +403,10 @@ function EKI_Run(forward::Function, θ0::Array{FT,2}, Σ_y::Array{FT,2}, y::Arra
                  dropout_rate::FT=FT(0.5), inflation::Bool=true,
                  dropout_deviation_Δτ::Union{Nothing,FT}=nothing,
                  dropout_mean_Δτ::Union{Nothing,FT}=nothing,
-                 dropout_linearization_bound::FT=FT(Inf)) where FT<:AbstractFloat
+                 dropout_linearization_bound::FT=FT(Inf),
+                 dropout_correction_mode::String="sequential",
+                 joint_dropout_weight::FT=one(FT),
+                 iteration_callback::Union{Nothing,Function}=nothing) where FT<:AbstractFloat
     N_y = size(y, 1)
     size(θ0, 2) > 1 || error("Need at least 2 ensemble members")
     if inflation && !(0 < Δτ < 1)
@@ -382,13 +421,16 @@ function EKI_Run(forward::Function, θ0::Array{FT,2}, Σ_y::Array{FT,2}, y::Arra
     y_pred_0 = func(θ0)
     # EKI obj initialization
     obj = EKIObj(filter_type, θ0, y_pred_0, y, Σ_y, Δτ, dropout_rate, inflation,
-                 dropout_deviation_Δτ_actual, dropout_mean_Δτ_actual, dropout_linearization_bound)
+                 dropout_deviation_Δτ_actual, dropout_mean_Δτ_actual, dropout_linearization_bound,
+                 dropout_correction_mode, joint_dropout_weight)
     @info "Running ", filter_type, " with ensemble size ", size(θ0,2)
+    iteration_callback !== nothing && iteration_callback(obj, 0)
     for n in 1:N_iter
         if n % max(1, div(N_iter,10)) == 0
             @info ("Iteration ", n, "/", N_iter)
         end
         update_ensemble!(obj, func)
+        iteration_callback !== nothing && iteration_callback(obj, n)
     end
     return obj
 end

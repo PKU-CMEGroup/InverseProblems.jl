@@ -9,8 +9,11 @@ Nonlinear least-squares benchmark forward maps.
 
 Supported:
 - "rastrigin"
+- "rotated_rastrigin"
+- "paired_rosenbrock"
 - "rosenbrock"
 - "weakly_nonlinear"
+- "monotone_cubic"
 
 Objective:
 
@@ -32,6 +35,29 @@ function func_F(theta, args)
         r2 = sqrt(2A) .* sin.(pi .* theta)
 
         return sqrt(2) .* vcat(r1,r2)
+
+    elseif name == "rotated_rastrigin"
+
+        z = args.B * (theta - args.ref_theta)
+        r1 = z
+        r2 = sqrt(2 * args.A) .* sin.(pi .* z)
+
+        return sqrt(2) .* vcat(r1, r2)
+
+
+    elseif name == "paired_rosenbrock"
+
+        iseven(dim) || error("paired_rosenbrock requires even dimension")
+        residual = zeros(eltype(theta), dim)
+
+        for i in 1:div(dim, 2)
+            x = theta[2i-1]
+            y = theta[2i]
+            residual[2i-1] = sqrt(200) * (y - x^2)
+            residual[2i] = sqrt(2) * (1 - x)
+        end
+
+        return residual
 
 
     elseif name == "rosenbrock"
@@ -56,6 +82,15 @@ function func_F(theta, args)
         z = args.G * theta
 
         return z + args.epsilon * tanh.(z) - args.y
+
+
+    elseif name == "monotone_cubic"
+
+        z = args.B * theta
+        z_ref = args.B * args.ref_theta
+        ψ(v) = v .+ args.alpha .* v.^3
+
+        return ψ(z) - ψ(z_ref)
 
 
     else
@@ -83,9 +118,10 @@ function make_test_args(
         name;
         dim=100,
         seed=1234,
-        A=2.0,
+        A=10.0,
         epsilon=1.0,
-        condition_number=10.0)
+        condition_number=10.0,
+        alpha=2.0)
 
     rng=MersenneTwister(seed)
 
@@ -102,6 +138,32 @@ function make_test_args(
         )
 
 
+    elseif name=="rotated_rastrigin"
+
+        ref_theta=zeros(dim)
+        B=Matrix(qr(randn(rng,dim,dim)).Q)
+
+        return (
+            name=name,
+            dim=dim,
+            ref_theta=ref_theta,
+            A=A,
+            B=B
+        )
+
+
+    elseif name=="paired_rosenbrock"
+
+        iseven(dim) || error("paired_rosenbrock requires even dimension")
+        ref_theta=ones(dim)
+
+        return (
+            name=name,
+            dim=dim,
+            ref_theta=ref_theta
+        )
+
+
     elseif name=="rosenbrock"
 
         ref_theta=ones(dim)
@@ -115,7 +177,7 @@ function make_test_args(
 
     elseif name=="weakly_nonlinear"
 
-        dim_y = 20
+        dim_y = min(20, dim)
 
         # prescribed spectrum
         U=Matrix(qr(randn(rng,dim,dim)).Q)[1:dim_y,:]
@@ -151,6 +213,20 @@ function make_test_args(
             epsilon=epsilon,
             y=y,
             condition_number=condition_number
+        )
+
+
+    elseif name=="monotone_cubic"
+
+        B=Matrix(qr(randn(rng,dim,dim)).Q)
+        ref_theta=randn(rng,dim)
+
+        return (
+            name=name,
+            dim=dim,
+            ref_theta=ref_theta,
+            B=B,
+            alpha=alpha
         )
 
 
