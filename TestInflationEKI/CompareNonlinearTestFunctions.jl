@@ -12,13 +12,25 @@ include(joinpath(@__DIR__, "..", "Inversion", "CMAES.jl"))
 include(joinpath(@__DIR__, "NonlinearFunctions.jl"))
 
 # Main knobs. Change these before running the script.
-const TEST_FUNCTION_NAMES = ["monotone_cubic", "paired_rosenbrock", "rastrigin"]
+const TEST_FUNCTION_NAMES = [
+    "monotone_cubic",
+    "paired_rosenbrock",
+    "rosenbrock",
+    "rastrigin",
+]
 const THETA_DIM = 100
 const N_ENS = 50
 const MAX_EVAL = 100 * (2 * N_ENS + 2)
 const N_GRID = 200
 const INFLATION_DT = 0.5
 const DROPOUT_RATE = 0.5
+const MEAN_LINE_SEARCH = true
+const MEAN_LINE_SEARCH_CONTRACTION = 0.5
+const MEAN_LINE_SEARCH_ARMIJO_C = 1e-4
+const JOINT_WEIGHT_MODE = "adaptive"
+const JOINT_WEIGHT_MIN = 0.1
+const JOINT_WEIGHT_MAX = 10.0
+const JOINT_WEIGHT_SMOOTHING = 0.25
 const INITIAL_STD = 1.0
 const NEAR_ZERO_TOL = 0.2
 const SEED = 1234
@@ -34,11 +46,19 @@ Base.@kwdef struct NonlinearComparisonConfig
     n_grid::Int = N_GRID
     inflation_dt::Float64 = INFLATION_DT
     dropout_rate::Float64 = DROPOUT_RATE
+    mean_line_search::Bool = MEAN_LINE_SEARCH
+    mean_line_search_contraction::Float64 = MEAN_LINE_SEARCH_CONTRACTION
+    mean_line_search_armijo_c::Float64 = MEAN_LINE_SEARCH_ARMIJO_C
     initial_std::Float64 = INITIAL_STD
     rastrigin_initial_center::Float64 = 1.0
     rastrigin_initial_half_width::Float64 = 4.0
     paired_rosenbrock_initial_std::Float64 = 0.3
+    rosenbrock_initial_std::Float64 = 0.3
     joint_dropout_weight::Float64 = 1.0
+    joint_weight_mode::String = JOINT_WEIGHT_MODE
+    joint_weight_min::Float64 = JOINT_WEIGHT_MIN
+    joint_weight_max::Float64 = JOINT_WEIGHT_MAX
+    joint_weight_smoothing::Float64 = JOINT_WEIGHT_SMOOTHING
     near_zero_tol::Float64 = NEAR_ZERO_TOL
     seed::Int = SEED
     output_dir::String = OUTPUT_DIR
@@ -130,6 +150,12 @@ function initial_ensemble(args::NamedTuple, cfg::NonlinearComparisonConfig, rng:
         theta_center = repeat([-1.2, 1.0], div(cfg.theta_dim, 2))
         return theta_center .+
                cfg.paired_rosenbrock_initial_std .* randn(rng, cfg.theta_dim, cfg.n_ens)
+    elseif args.name == "rosenbrock"
+        # The same classical alternating start is now coupled through every
+        # adjacent pair by the chained Rosenbrock forward map.
+        theta_center = [isodd(i) ? -1.2 : 1.0 for i in 1:cfg.theta_dim]
+        return theta_center .+
+               cfg.rosenbrock_initial_std .* randn(rng, cfg.theta_dim, cfg.n_ens)
     end
     return cfg.initial_std .* randn(rng, cfg.theta_dim, cfg.n_ens)
 end
@@ -256,6 +282,9 @@ function run_eki_method(problem::NonlinearComparisonProblem, ctx, cfg::Nonlinear
     n_iter = iterations_for_eval_budget(budget_name, cfg)
     tracker = ForwardTracker(problem.theta_dim)
     counted_forward(theta) = tracked_forward(problem, tracker, theta)
+    use_mean_line_search = filter_type == "dropout-EAKI" && cfg.mean_line_search
+    joint_weight_mode = filter_type == "dropout-EAKI" && correction_mode == "joint" ?
+        cfg.joint_weight_mode : "fixed"
 
     evaluation_history = Int[]
     best_value_history = Float64[]
@@ -267,13 +296,23 @@ function run_eki_method(problem::NonlinearComparisonProblem, ctx, cfg::Nonlinear
 
     function record_iteration(obj, iteration)
         ensemble = copy(obj.θ[end])
-        mean_point = vec(mean(ensemble, dims=2))
+        if obj.mean_line_search
+            mean_point = vec(obj.mean_state)
+            mean_value = obj.mean_prediction_cache === nothing ?
+                ctx.phi(mean_point) :
+                observation_objective(problem, vec(obj.mean_prediction_cache))
+            covariance_value = norm(obj.anomaly_state * obj.anomaly_state')
+        else
+            mean_point = vec(mean(ensemble, dims=2))
+            mean_value = ctx.phi(mean_point)
+            covariance_value = norm(ensemble_covariance(ensemble))
+        end
         push!(evaluation_history, tracker.evaluations)
         push!(best_value_history, tracker.best_value)
         push!(best_point_history, copy(tracker.best_point))
         push!(mean_point_history, mean_point)
-        push!(mean_value_history, ctx.phi(mean_point))
-        push!(covariance_history, norm(ensemble_covariance(ensemble)))
+        push!(mean_value_history, mean_value)
+        push!(covariance_history, covariance_value)
         push!(ensemble_history_at_callback, ensemble)
         return nothing
     end
@@ -291,6 +330,13 @@ function run_eki_method(problem::NonlinearComparisonProblem, ctx, cfg::Nonlinear
         forward_parallel=true,
         dropout_correction_mode=correction_mode,
         joint_dropout_weight=cfg.joint_dropout_weight,
+        joint_weight_mode=joint_weight_mode,
+        joint_weight_min=cfg.joint_weight_min,
+        joint_weight_max=cfg.joint_weight_max,
+        joint_weight_smoothing=cfg.joint_weight_smoothing,
+        mean_line_search=use_mean_line_search,
+        mean_line_search_contraction=cfg.mean_line_search_contraction,
+        mean_line_search_armijo_c=cfg.mean_line_search_armijo_c,
         iteration_callback=record_iteration,
     )
 
@@ -305,6 +351,7 @@ function run_eki_method(problem::NonlinearComparisonProblem, ctx, cfg::Nonlinear
     covariance_norm = covariance_history[valid]
     final_points = ensemble_history_at_callback[last_valid]
     final_mean_point = mean_points[end]
+    joint_history_length = min(last_valid - 1, length(ekiobj.joint_weight_history))
     return (;
         label,
         method=budget_name,
@@ -321,6 +368,24 @@ function run_eki_method(problem::NonlinearComparisonProblem, ctx, cfg::Nonlinear
         mean_optimization_error=mean_values,
         covariance_norm,
         x_axis=evaluation_axis,
+        mean_step_gamma=use_mean_line_search ?
+            copy(ekiobj.mean_step_γ[1:last_valid-1]) : Float64[],
+        mean_step_source=use_mean_line_search ?
+            copy(ekiobj.mean_step_source[1:last_valid-1]) : String[],
+        mean_step_trials=use_mean_line_search ?
+            copy(ekiobj.mean_step_trials[1:last_valid-1]) : Int[],
+        mean_step_backtracks=use_mean_line_search ?
+            copy(ekiobj.mean_step_backtracks[1:last_valid-1]) : Int[],
+        mean_step_reduction_ratio=use_mean_line_search ?
+            copy(ekiobj.mean_step_reduction_ratio[1:last_valid-1]) : Float64[],
+        joint_weight=correction_mode == "joint" ?
+            copy(ekiobj.joint_weight_history[1:joint_history_length]) : Float64[],
+        joint_trust_ratio=correction_mode == "joint" ?
+            copy(ekiobj.joint_trust_ratio_history[1:joint_history_length]) : Float64[],
+        joint_predicted_reduction=correction_mode == "joint" ?
+            copy(ekiobj.joint_predicted_reduction_history[1:joint_history_length]) : Float64[],
+        joint_actual_reduction=correction_mode == "joint" ?
+            copy(ekiobj.joint_actual_reduction_history[1:joint_history_length]) : Float64[],
     )
 end
 
@@ -379,10 +444,15 @@ function run_problem_comparison(problem::NonlinearComparisonProblem, cfg::Nonlin
     ctx = objective_context(problem)
     runs = NamedTuple[]
     push!(runs, run_eki_method(problem, ctx, cfg, "EAKI", "Inflation EAKI", seed))
+    line_search_suffix = cfg.mean_line_search ? " + mean LS" : ""
+    adaptive_weight_suffix = cfg.joint_weight_mode == "adaptive" ?
+        " + adaptive w" : ""
     push!(runs, run_eki_method(problem, ctx, cfg, "dropout-EAKI",
-        "Sequential projected dropout EAKI", seed + 1; correction_mode="sequential"))
+        "Sequential projected dropout EAKI$(line_search_suffix)", seed + 1;
+        correction_mode="sequential"))
     push!(runs, run_eki_method(problem, ctx, cfg, "dropout-EAKI",
-        "Joint projected EAKI", seed + 1; correction_mode="joint"))
+        "Joint projected EAKI$(line_search_suffix)$(adaptive_weight_suffix)", seed + 1;
+        correction_mode="joint"))
     push!(runs, run_eki_method(problem, ctx, cfg, "DEKI", "DEKI", seed + 1))
     push!(runs, run_cma_es(problem, ctx, cfg, seed + 1))
     return runs

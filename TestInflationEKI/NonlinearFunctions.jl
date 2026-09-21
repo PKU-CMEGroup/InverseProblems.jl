@@ -10,8 +10,8 @@ Nonlinear least-squares benchmark forward maps.
 Supported:
 - "rastrigin"
 - "rotated_rastrigin"
-- "paired_rosenbrock"
-- "rosenbrock"
+- "paired_rosenbrock" (independent two-coordinate blocks)
+- "rosenbrock" (chained adjacent-coordinate form)
 - "weakly_nonlinear"
 - "monotone_cubic"
 
@@ -62,16 +62,17 @@ function func_F(theta, args)
 
     elseif name == "rosenbrock"
 
+        # Chained d-dimensional Rosenbrock objective:
+        #   Phi(theta) = sum_{i=1}^{d-1}
+        #       [100(theta[i+1] - theta[i]^2)^2 + (1 - theta[i])^2].
+        # The sqrt(200)/sqrt(2) scaling below makes Phi = 0.5*||F||^2.
         d = dim
-        @assert d%2==0 "Rosenbrock function requires even dimension"
-        residual = zeros(d)
+        d >= 2 || error("rosenbrock requires dimension at least 2")
+        residual = zeros(eltype(theta), 2 * (d - 1))
 
-        for i in 1:div(d,2)
-            residual[2i-1] =
-                10*(theta[2i]-theta[2i-1]^2)
-
-            residual[2i] =
-                1-theta[2i-1]
+        for i in 1:(d - 1)
+            residual[2i-1] = sqrt(200) * (theta[i+1] - theta[i]^2)
+            residual[2i] = sqrt(2) * (1 - theta[i])
         end
 
         return residual
