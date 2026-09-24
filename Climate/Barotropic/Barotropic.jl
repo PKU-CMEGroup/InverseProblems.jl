@@ -4,6 +4,91 @@ using Random
 import PyPlot
 include("../../Inversion/Plot.jl")
 
+"""
+    barotropic_heat_prior_cov(trunc_N; sigma, beta, variance_floor)
+
+Diagonal heat-kernel covariance in the degree-major coefficient order used by
+`spe_to_param`. Keeping the default covariance diagonal avoids allocating a
+dense `trunc_N * (trunc_N + 2)` square matrix at T85.
+"""
+function barotropic_heat_prior_cov(
+    trunc_N::Integer;
+    sigma::Real=10.0,
+    beta::Real=0.2,
+    variance_floor::Real=1.0e-6,
+)
+    trunc_N >= 1 || error("trunc_N must be positive")
+    isfinite(sigma) && sigma > 0 || error("sigma must be finite and positive")
+    isfinite(beta) && beta >= 0 || error("beta must be finite and nonnegative")
+    isfinite(variance_floor) && variance_floor > 0 ||
+        error("variance_floor must be finite and positive")
+    variances = Float64[
+        max(variance_floor, sigma^2 * exp(-beta * n * (n + 1)))
+        for n in 1:trunc_N for _ in 1:(2n + 1)
+    ]
+    return Diagonal(variances)
+end
+
+"""
+    barotropic_power_law_prior_cov(trunc_N; sigma, alpha, variance_floor)
+
+Diagonal power-law covariance in the degree-major coefficient order used by
+`spe_to_param`. All `2n + 1` real coefficients of degree `n` have variance
+`max(variance_floor, sigma^2 * (n * (n + 1))^(-alpha))`.
+"""
+function barotropic_power_law_prior_cov(
+    trunc_N::Integer;
+    sigma::Real=1.0,
+    alpha::Real=1.0,
+    variance_floor::Real=0.0,
+)
+    trunc_N >= 1 || error("trunc_N must be positive")
+    isfinite(sigma) && sigma > 0 || error("sigma must be finite and positive")
+    isfinite(alpha) && alpha >= 0 || error("alpha must be finite and nonnegative")
+    isfinite(variance_floor) && variance_floor >= 0 ||
+        error("variance_floor must be finite and nonnegative")
+    variances = Float64[
+        max(variance_floor, sigma^2 * Float64(n * (n + 1))^(-alpha))
+        for n in 1:trunc_N for _ in 1:(2n + 1)
+    ]
+    all(isfinite, variances) || error("power-law prior variances must be finite")
+    return Diagonal(variances)
+end
+
+"""
+    barotropic_prior_covariance_factor(trunc_N; prior_cov=nothing)
+
+Return a validated covariance and one reusable lower factor `L` satisfying
+`L * L' == prior_cov`. A diagonal covariance remains diagonal; a supplied
+dense `Matrix` is copied, validated, and factorized exactly once.
+"""
+function barotropic_prior_covariance_factor(
+    trunc_N::Integer;
+    prior_cov::Union{Nothing,Diagonal,Matrix}=nothing,
+)
+    n_param = trunc_N * (trunc_N + 2)
+    if isnothing(prior_cov)
+        covariance = barotropic_heat_prior_cov(trunc_N)
+        factor = Diagonal(sqrt.(diag(covariance)))
+        return covariance, factor
+    end
+
+    size(prior_cov) == (n_param, n_param) ||
+        error("prior_cov must be $(n_param) x $(n_param)")
+    all(isfinite, prior_cov) || error("prior_cov must contain only finite values")
+    if prior_cov isa Diagonal
+        variances = Float64.(diag(prior_cov))
+        all(>(0), variances) || error("prior_cov diagonal entries must be positive")
+        covariance = Diagonal(variances)
+        return covariance, Diagonal(sqrt.(variances))
+    end
+    covariance = Matrix{Float64}(prior_cov)
+    isapprox(covariance, covariance'; rtol=1.0e-12, atol=1.0e-12) ||
+        error("prior_cov must be symmetric")
+    factor = cholesky(Symmetric(covariance); check=true).L
+    return covariance, factor
+end
+
 
 function plot_field(spe_mesh::Spectral_Spherical_Mesh, grid_dat::Array{Float64,3}, level::Int64, clim, ax; cmap="viridis", obs_coord = nothing)
     
