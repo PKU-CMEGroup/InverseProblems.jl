@@ -6,7 +6,7 @@ using PyPlot
 
 include("Barotropic.jl")
 include("../../Inversion/KI.jl")
-include("Section52Plots.jl")
+include("BarotropicPlots.jl")
 
 """
     barotropic_u_forward_eki(sparam, tau)
@@ -157,7 +157,7 @@ function ensemble_mean(ekiobj::EKIObj)
 end
 
 function eki_plot_prefix(output_file::String, filter_type::String)
-    default_prefix = section52_default_plot_prefix(output_file)
+    default_prefix = barotropic_default_plot_prefix(output_file)
     prefix_dir = dirname(default_prefix)
     prefix_name = basename(default_prefix)
     prefix_name = startswith(prefix_name, "EKI_Barotropic") ?
@@ -321,9 +321,9 @@ function run_section52_eki(;
     end
 
     tau_history = [dropdims(mean(θ, dims=1), dims=1) for θ in ekiobj.θ[2:end]]
-    vorticity_errors = section52_vorticity_errors(sparam, tau_history, reconstruct_initial_vorticity_eki)
+    vorticity_errors = barotropic_vorticity_errors(sparam, tau_history, reconstruct_initial_vorticity_eki)
     data_y_pred = [y_pred[1:length(y_obs)] for y_pred in ekiobj.y_pred]
-    observation_errors = section52_observation_errors(y_obs, data_y_pred)
+    observation_errors = barotropic_observation_errors(y_obs, data_y_pred)
     covariance_norms = [norm(cov(θ, dims=1, corrected=true)) for θ in ekiobj.θ]
 
     tau_est = ensemble_mean(ekiobj)
@@ -355,7 +355,7 @@ function run_section52_eki(;
 
     if save_plots
         prefix = isnothing(plot_prefix) ? eki_plot_prefix(output_file, filter_type) : plot_prefix
-        plot_files = section52_write_standard_plots(result; method_label=filter_type, plot_prefix=prefix)
+        plot_files = barotropic_write_standard_plots(result; method_label=filter_type, plot_prefix=prefix)
         
         # Call plot_param_iter and save
         fig_param = PyPlot.figure()
@@ -371,7 +371,7 @@ function run_section52_eki(;
         PyPlot.close()
         push!(plot_files, prefix * "_opt_errors.png")
 
-        push!(plot_files, section52_plot_covariance_norm(
+        push!(plot_files, barotropic_plot_covariance_norm(
             result.covariance_norms,
             prefix * "_cov_norm.png";
             method_label=filter_type,

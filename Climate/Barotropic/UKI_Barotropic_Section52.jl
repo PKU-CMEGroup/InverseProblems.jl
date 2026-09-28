@@ -4,7 +4,7 @@ using Serialization
 
 include("Barotropic.jl")
 include("../../Inversion/UKI.jl")
-include("Section52Plots.jl")
+include("BarotropicPlots.jl")
 
 """
     barotropic_u_forward(sparam, tau)
@@ -308,9 +308,9 @@ function run_section52_uki(;
     end
 
     tau_history = ukiobj.θ_mean[2:end]
-    vorticity_errors = section52_vorticity_errors(sparam, tau_history, reconstruct_initial_vorticity)
+    vorticity_errors = barotropic_vorticity_errors(sparam, tau_history, reconstruct_initial_vorticity)
     data_y_pred = [y_pred[1:length(y_obs)] for y_pred in ukiobj.y_pred]
-    observation_errors = section52_observation_errors(y_obs, data_y_pred)
+    observation_errors = barotropic_observation_errors(y_obs, data_y_pred)
     covariance_norms = [norm(cov_i) for cov_i in ukiobj.θθ_cov]
 
     tau_est = ukiobj.θ_mean[end]
@@ -341,8 +341,8 @@ function run_section52_uki(;
     )
 
     if save_plots
-        prefix = isnothing(plot_prefix) ? section52_default_plot_prefix(output_file) : plot_prefix
-        plot_files = section52_write_standard_plots(result; method_label="UKI", plot_prefix=prefix)
+        prefix = isnothing(plot_prefix) ? barotropic_default_plot_prefix(output_file) : plot_prefix
+        plot_files = barotropic_write_standard_plots(result; method_label="UKI", plot_prefix=prefix)
 
         fig_param = PyPlot.figure()
         θ_ref_names = ["tau_$i" for i in 1:length(result.tau_ref)]
@@ -356,7 +356,7 @@ function run_section52_uki(;
         PyPlot.close()
         push!(plot_files, prefix * "_opt_errors.png")
 
-        push!(plot_files, section52_plot_covariance_norm(
+        push!(plot_files, barotropic_plot_covariance_norm(
             result.covariance_norms,
             prefix * "_cov_norm.png";
             method_label="UKI",

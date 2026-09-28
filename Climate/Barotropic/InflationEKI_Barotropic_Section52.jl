@@ -6,7 +6,7 @@ using PyPlot
 
 include("Barotropic.jl")
 include("../../Inversion/InflationEKI.jl")
-include("Section52Plots.jl")
+include("BarotropicPlots.jl")
 
 """
     barotropic_u_forward_inflation_eki(sparam, tau)
@@ -143,7 +143,7 @@ function inflation_ensemble_cov(θ::AbstractMatrix)
 end
 
 function inflation_eki_plot_prefix(output_file::String, filter_type::String)
-    default_prefix = section52_default_plot_prefix(output_file)
+    default_prefix = barotropic_default_plot_prefix(output_file)
     prefix_dir = dirname(default_prefix)
     prefix_name = basename(default_prefix)
     prefix_name = startswith(prefix_name, "InflationEKI_Barotropic") ?
@@ -311,12 +311,12 @@ function run_section52_inflation_eki(;
     )
 
     tau_history = [dropdims(mean(θ, dims=2), dims=2) for θ in inflation_ekiobj.θ[2:end]]
-    vorticity_errors = section52_vorticity_errors(sparam, tau_history, reconstruct_initial_vorticity_inflation_eki)
+    vorticity_errors = barotropic_vorticity_errors(sparam, tau_history, reconstruct_initial_vorticity_inflation_eki)
     data_y_pred = [
         dropdims(mean(y_pred[1:length(y_obs), :], dims=2), dims=2)
         for y_pred in inflation_ekiobj.y_pred[2:end]
     ]
-    observation_errors = section52_observation_errors(y_obs, data_y_pred)
+    observation_errors = barotropic_observation_errors(y_obs, data_y_pred)
     covariance_norms = [norm(inflation_ensemble_cov(θ)) for θ in inflation_ekiobj.θ]
 
     tau_est = inflation_ensemble_mean(inflation_ekiobj)
@@ -350,7 +350,7 @@ function run_section52_inflation_eki(;
 
     if save_plots
         prefix = isnothing(plot_prefix) ? inflation_eki_plot_prefix(output_file, filter_type) : plot_prefix
-        plot_files = section52_write_standard_plots(result; method_label=filter_type, plot_prefix=prefix)
+        plot_files = barotropic_write_standard_plots(result; method_label=filter_type, plot_prefix=prefix)
 
         fig_param = PyPlot.figure()
         θ_ref_names = ["tau_$i" for i in 1:length(result.tau_ref)]
@@ -364,7 +364,7 @@ function run_section52_inflation_eki(;
         PyPlot.close()
         push!(plot_files, prefix * "_opt_errors.png")
 
-        push!(plot_files, section52_plot_covariance_norm(
+        push!(plot_files, barotropic_plot_covariance_norm(
             result.covariance_norms,
             prefix * "_cov_norm.png";
             method_label=filter_type,

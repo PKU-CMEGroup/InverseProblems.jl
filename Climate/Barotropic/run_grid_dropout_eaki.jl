@@ -1,10 +1,11 @@
-include("GridDropoutEAKI_Barotropic_Section52.jl")
+include("GridDropoutEAKI_Barotropic.jl")
 
-result = run_section52_grid_dropout_eaki(
+result = run_grid_dropout_eaki(
     num_fourier=85,
     nlat=256,
     trunc_N=85,
     init_trunc_N=7,
+    model_dt=1200,
     nobs=50,
     n_obs_frames=2,
     end_time=86400,

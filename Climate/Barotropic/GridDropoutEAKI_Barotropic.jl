@@ -5,13 +5,9 @@ using Statistics
 using PyPlot
 
 include("Barotropic.jl")
-include("../../Inversion/LowRankAugmentedDropoutEAKI.jl")
-include("Section52Plots.jl")
+include("../../Inversion/AdaptiveInflatedEKI.jl")
+include("BarotropicPlots.jl")
 
-using .LowRankAugmentedDropoutEAKI: LowRankPrior, prior_coordinates,
-    prior_coordinate_dimension,
-    low_rank_augmented_inner, EKI_Run_Low_Rank_Prior, low_rank_opt_errors,
-    EKI_Run, opt_errors
 
 """
     Barotropic_Main_Grid(sparam, grid_vor0)
@@ -96,23 +92,23 @@ function Barotropic_Main_Grid(sparam::Setup_Param, grid_vor0)
     return mesh, obs_data
 end
 
-function section52_grid_shape(sparam::Setup_Param)
+function barotropic_grid_shape(sparam::Setup_Param)
     return length(sparam.mesh.λc), length(sparam.mesh.θc), 1
 end
 
-function section52_grid_parameter_dimension(sparam::Setup_Param)
-    nlon, nlat, _ = section52_grid_shape(sparam)
+function barotropic_grid_parameter_dimension(sparam::Setup_Param)
+    nlon, nlat, _ = barotropic_grid_shape(sparam)
     return nlon * nlat
 end
 
-function section52_check_grid_parameterization(parameterization::String)
+function barotropic_check_grid_parameterization(parameterization::String)
     parameterization in ("perturbation_grid", "full_grid") ||
         error("parameterization must be \"perturbation_grid\" or \"full_grid\".")
 end
 
-function section52_grid_prior_mean(sparam::Setup_Param; parameterization::String="perturbation_grid")
-    section52_check_grid_parameterization(parameterization)
-    nparam = section52_grid_parameter_dimension(sparam)
+function barotropic_grid_prior_mean(sparam::Setup_Param; parameterization::String="perturbation_grid")
+    barotropic_check_grid_parameterization(parameterization)
+    nparam = barotropic_grid_parameter_dimension(sparam)
     if parameterization == "perturbation_grid"
         # Preferred high-dimensional parameterization:
         #   theta = initial vorticity perturbation on the grid,
@@ -127,8 +123,8 @@ function section52_grid_prior_mean(sparam::Setup_Param; parameterization::String
     end
 end
 
-function section52_grid_truth_vector(sparam::Setup_Param; parameterization::String="perturbation_grid")
-    section52_check_grid_parameterization(parameterization)
+function barotropic_grid_truth_vector(sparam::Setup_Param; parameterization::String="perturbation_grid")
+    barotropic_check_grid_parameterization(parameterization)
     if parameterization == "perturbation_grid"
         # Store the true unknown in the same coordinates used by dropout-EAKI.
         return vec(copy(sparam.grid_vor .- sparam.grid_vor_b))
@@ -137,7 +133,7 @@ function section52_grid_truth_vector(sparam::Setup_Param; parameterization::Stri
     end
 end
 
-function section52_project_grid_vorticity_to_model_space(sparam::Setup_Param, grid_vor)
+function barotropic_project_grid_vorticity_to_model_space(sparam::Setup_Param, grid_vor)
     spe_vor = similar(sparam.spe_vor)
     grid_projected = similar(sparam.grid_vor)
     spe_vor .= 0.0
@@ -152,14 +148,14 @@ function section52_project_grid_vorticity_to_model_space(sparam::Setup_Param, gr
     return grid_projected
 end
 
-function section52_grid_vector_to_vorticity(
+function barotropic_grid_vector_to_vorticity(
     sparam::Setup_Param,
     θ::AbstractVector;
     parameterization::String="perturbation_grid",
     project_to_model_space::Bool=false,
 )
-    section52_check_grid_parameterization(parameterization)
-    nlon, nlat, nlev = section52_grid_shape(sparam)
+    barotropic_check_grid_parameterization(parameterization)
+    nlon, nlat, nlev = barotropic_grid_shape(sparam)
     @assert nlev == 1
     @assert length(θ) == nlon * nlat "θ must have length $(nlon * nlat)."
 
@@ -175,15 +171,15 @@ function section52_grid_vector_to_vorticity(
         grid_vor0 .= θ_grid
     end
 
-    return project_to_model_space ? section52_project_grid_vorticity_to_model_space(sparam, grid_vor0) : grid_vor0
+    return project_to_model_space ? barotropic_project_grid_vorticity_to_model_space(sparam, grid_vor0) : grid_vor0
 end
 
-function section52_vorticity_to_grid_vector(
+function barotropic_vorticity_to_grid_vector(
     sparam::Setup_Param,
     grid_vor;
     parameterization::String="perturbation_grid",
 )
-    section52_check_grid_parameterization(parameterization)
+    barotropic_check_grid_parameterization(parameterization)
     if parameterization == "perturbation_grid"
         return vec(copy(grid_vor .- sparam.grid_vor_b))
     else
@@ -191,19 +187,19 @@ function section52_vorticity_to_grid_vector(
     end
 end
 
-function section52_project_grid_parameter_to_model_space(
+function barotropic_project_grid_parameter_to_model_space(
     sparam::Setup_Param,
     θ::AbstractVector;
     parameterization::String="perturbation_grid",
 )
-    grid_vor0 = section52_grid_vector_to_vorticity(
+    grid_vor0 = barotropic_grid_vector_to_vorticity(
         sparam,
         θ;
         parameterization=parameterization,
         project_to_model_space=false,
     )
-    grid_projected = section52_project_grid_vorticity_to_model_space(sparam, grid_vor0)
-    return section52_vorticity_to_grid_vector(sparam, grid_projected; parameterization=parameterization)
+    grid_projected = barotropic_project_grid_vorticity_to_model_space(sparam, grid_vor0)
+    return barotropic_vorticity_to_grid_vector(sparam, grid_projected; parameterization=parameterization)
 end
 
 function barotropic_u_forward_grid_dropout_eaki(
@@ -213,7 +209,7 @@ function barotropic_u_forward_grid_dropout_eaki(
 )
     # This is the high-dimensional forward map G(θ). It converts one
     # grid-valued initial condition to the pointwise zonal wind observations.
-    grid_vor0 = section52_grid_vector_to_vorticity(
+    grid_vor0 = barotropic_grid_vector_to_vorticity(
         sparam,
         θ;
         parameterization=parameterization,
@@ -228,7 +224,7 @@ function barotropic_u_forward_grid_dropout_eaki(
     )
 end
 
-function build_section52_grid_dropout_eaki_problem(;
+function build_grid_dropout_eaki_problem(;
     num_fourier::Int=85,
     nlat::Int=256,
     model_dt::Int=1800,
@@ -244,7 +240,7 @@ function build_section52_grid_dropout_eaki_problem(;
     obs_seed::Int=42,
     parameterization::String="perturbation_grid",
 )
-    section52_check_grid_parameterization(parameterization)
+    barotropic_check_grid_parameterization(parameterization)
     nlon = 2nlat
     n_y = nobs * n_obs_frames
 
@@ -289,7 +285,7 @@ function build_section52_grid_dropout_eaki_problem(;
         omega=omega,
     )
 
-    θ_ref = section52_grid_truth_vector(sparam; parameterization=parameterization)
+    θ_ref = barotropic_grid_truth_vector(sparam; parameterization=parameterization)
     return sparam, θ_ref
 end
 
@@ -329,10 +325,10 @@ function reconstruct_initial_vorticity_grid_dropout_eaki(sparam::Setup_Param, ta
     return grid_vor
 end
 
-function section52_grid_prior_covariance_factor(sparam::Setup_Param, prior_cov_sqrt)
+function grid_dropout_eaki_prior_covariance_factor(sparam::Setup_Param, prior_cov_sqrt)
     U = zeros(
         Float64,
-        section52_grid_parameter_dimension(sparam),
+        barotropic_grid_parameter_dimension(sparam),
         size(prior_cov_sqrt, 2),
     )
     for j in axes(U, 2)
@@ -340,65 +336,63 @@ function section52_grid_prior_covariance_factor(sparam::Setup_Param, prior_cov_s
             sparam,
             view(prior_cov_sqrt, :, j),
         )
-        U[:, j] .= section52_vorticity_to_grid_vector(sparam, grid_vor_j)
+        U[:, j] .= barotropic_vorticity_to_grid_vector(sparam, grid_vor_j)
     end
     return U
 end
 
-function section52_grid_to_prior_coefficients(
+function grid_dropout_eaki_grid_to_prior_coefficients(
     sparam::Setup_Param,
     theta::AbstractVector,
     trunc_N::Int=sparam.trunc_N,
 )
-    length(theta) == section52_grid_parameter_dimension(sparam) ||
+    length(theta) == barotropic_grid_parameter_dimension(sparam) ||
         throw(DimensionMismatch("grid parameter has the wrong length"))
     1 <= trunc_N <= sparam.num_fourier ||
         throw(ArgumentError("trunc_N must lie in 1:$(sparam.num_fourier)"))
-    grid_vor = reshape(collect(theta), section52_grid_shape(sparam))
+    grid_vor = reshape(collect(theta), barotropic_grid_shape(sparam))
     spe_vor = similar(sparam.spe_vor)
     fill!(spe_vor, 0)
     Trans_Grid_To_Spherical!(sparam.mesh, grid_vor, spe_vor)
     return spe_to_param(spe_vor, trunc_N; radius=sparam.radius)
 end
 
-function section52_grid_to_prior_coefficients(
+function grid_dropout_eaki_grid_to_prior_coefficients(
     sparam::Setup_Param,
     theta::AbstractMatrix,
     trunc_N::Int=sparam.trunc_N,
 )
     coefficients = Matrix{Float64}(undef, trunc_N * (trunc_N + 2), size(theta, 2))
     for j in axes(theta, 2)
-        coefficients[:, j] .= section52_grid_to_prior_coefficients(
+        coefficients[:, j] .= grid_dropout_eaki_grid_to_prior_coefficients(
             sparam, view(theta, :, j), trunc_N,
         )
     end
     return coefficients
 end
 
-function section52_grid_prior(
+function grid_dropout_eaki_prior(
     sparam::Setup_Param;
     prior_cov::Union{Diagonal,Matrix,Nothing}=nothing,
 )
     covariance = isnothing(prior_cov) ?
-        barotropic_power_law_prior_cov(sparam.trunc_N; sigma=10.0, alpha=0.0) :
+        barotropic_power_law_prior_cov(sparam.trunc_N; sigma=3.0, alpha=0.0) :
         prior_cov
-    # covariance = barotropic_heat_prior_cov(
-    #     sparam.trunc_N; sigma=10.0, beta=0.2, variance_floor=1.0e-14,)
     prior_cov_mat, prior_cov_sqrt = barotropic_prior_covariance_factor(
         sparam.trunc_N;
         prior_cov=covariance,
     )
     coordinates(theta) = prior_cov_sqrt \
-        section52_grid_to_prior_coefficients(sparam, theta, sparam.trunc_N)
+        grid_dropout_eaki_grid_to_prior_coefficients(sparam, theta, sparam.trunc_N)
     prior = LowRankPrior(
-        section52_grid_prior_mean(sparam),
+        barotropic_grid_prior_mean(sparam),
         size(prior_cov_sqrt, 2),
         coordinates,
     )
     return prior, prior_cov_mat, prior_cov_sqrt
 end
 
-function section52_initial_grid_ensemble(
+function grid_dropout_eaki_initial_ensemble(
     sparam::Setup_Param,
     n_ens::Int;
     init_trunc_N::Int=sparam.trunc_N,
@@ -415,7 +409,7 @@ function section52_initial_grid_ensemble(
         init_trunc_N;
         prior_cov=covariance,
     )
-    U_init = section52_grid_prior_covariance_factor(sparam, init_prior_cov_sqrt)
+    U_init = grid_dropout_eaki_prior_covariance_factor(sparam, init_prior_cov_sqrt)
 
     rng = MersenneTwister(ensemble_seed)
     xi0 = randn(rng, size(init_prior_cov_sqrt, 2), n_ens)
@@ -423,7 +417,7 @@ function section52_initial_grid_ensemble(
     θ0 = U_init * xi0
     if project_to_model_space
         for j in axes(θ0, 2)
-            θ0[:, j] .= section52_project_grid_parameter_to_model_space(
+            θ0[:, j] .= barotropic_project_grid_parameter_to_model_space(
                 sparam,
                 θ0[:, j],
             )
@@ -434,7 +428,7 @@ function section52_initial_grid_ensemble(
 end
 
 
-function section52_grid_lowrank_covariance_norm(θ::AbstractMatrix)
+function grid_dropout_eaki_covariance_norm(θ::AbstractMatrix)
     size(θ, 2) <= 1 && return 0.0
     θ_mean = mean(θ, dims=2)
     Z = (θ .- θ_mean) ./ sqrt(size(θ, 2) - 1)
@@ -459,6 +453,8 @@ function EKI_Run_Grid_Prior(
     inflation::Bool=true,
     dropout_correction_mode::String="joint",
     joint_dropout_weight::FT=one(FT),
+    joint_weight_mode::String="fixed",
+    mean_line_search::Bool=false,
 ) where FT<:AbstractFloat
     return EKI_Run_Low_Rank_Prior(
         forward, θ0, Σ_y, y, prior;
@@ -469,10 +465,12 @@ function EKI_Run_Grid_Prior(
         inflation=inflation,
         dropout_correction_mode=dropout_correction_mode,
         joint_dropout_weight=joint_dropout_weight,
+        joint_weight_mode=joint_weight_mode,
+        mean_line_search=mean_line_search,
     )
 end
 
-function section52_grid_optimization_errors(
+function grid_dropout_eaki_optimization_errors(
     ekiobj,
     prior::Union{LowRankPrior,Nothing},
 )
@@ -480,100 +478,7 @@ function section52_grid_optimization_errors(
            low_rank_opt_errors(ekiobj, prior)[2:end]
 end
 
-function section52_plot_grid_optimization_error(optimization_errors, save_file::String; method_label::String)
-    iterations = collect(1:length(optimization_errors))
-    fig, ax = PyPlot.subplots(nrows=1, ncols=1, figsize=(6, 4), squeeze=false)
-
-    ax[1, 1].plot(iterations, optimization_errors, linestyle="--", marker="o", fillstyle="none", label=method_label)
-    ax[1, 1].set_xlabel("Iterations")
-    ax[1, 1].set_ylabel("Optimization error")
-    ax[1, 1].grid()
-    ax[1, 1].legend()
-
-    fig.tight_layout()
-    mkpath(dirname(save_file))
-    fig.savefig(save_file, dpi=180)
-    PyPlot.close(fig)
-    return save_file
-end
-
-function section52_plot_grid_observation_frames(sparam::Setup_Param, grid_vor_ref, save_file::String)
-    _, obs_raw_data = Barotropic_Main_Grid(sparam, grid_vor_ref)
-    vel_u_frames = obs_raw_data["vel_u"]
-    nframes = length(vel_u_frames)
-    clim = (minimum(minimum.(vel_u_frames)), maximum(maximum.(vel_u_frames)))
-
-    fig, axs = PyPlot.subplots(nrows=1, ncols=nframes, figsize=(6nframes, 4), squeeze=false)
-    for i in 1:nframes
-        obs_hour = round(i * sparam.obs_time / 3600; digits=2)
-        section52_plot_field!(
-            fig,
-            axs[1, i],
-            sparam.mesh,
-            vel_u_frames[i];
-            title="Zonal velocity, T=$(obs_hour)h",
-            clim=clim,
-            cmap="viridis",
-            obs_coord=sparam.obs_coord,
-        )
-    end
-    fig.tight_layout()
-    mkpath(dirname(save_file))
-    fig.savefig(save_file, dpi=180)
-    PyPlot.close(fig)
-    return save_file
-end
-
-function section52_plot_grid_vorticity_std(sparam::Setup_Param, theta_ensemble, save_file::String)
-    grid_std = reshape(vec(std(theta_ensemble; dims=2)), size(sparam.grid_vor))
-    return section52_save_single_field(
-        sparam.mesh,
-        grid_std,
-        save_file;
-        title="Final vorticity standard deviation",
-        clim=(0.0, maximum(grid_std)),
-        cmap="viridis",
-    )
-end
-
-function section52_write_grid_dropout_eaki_plots(result, final_ensemble; method_label::String, plot_prefix::String)
-    plot_files = String[]
-    push!(plot_files, section52_plot_initial_condition(result.sparam, plot_prefix * "_initial_condition.png"))
-    push!(plot_files, section52_plot_grid_observation_frames(
-        result.sparam,
-        result.sparam.grid_vor,
-        plot_prefix * "_zonal_velocity_observations.png",
-    ))
-    push!(plot_files, section52_plot_recovered_vorticity(
-        result.sparam,
-        [(method_label, result.grid_vor_est)],
-        plot_prefix * "_recovered_vorticity.png",
-    ))
-    push!(plot_files, section52_plot_convergence(
-        result.vorticity_errors,
-        result.observation_errors,
-        plot_prefix * "_convergence.png";
-        method_label=method_label,
-    ))
-    push!(plot_files, section52_plot_grid_optimization_error(
-        result.optimization_errors,
-        plot_prefix * "_opt_errors.png";
-        method_label=method_label,
-    ))
-    push!(plot_files, section52_plot_covariance_norm(
-        result.covariance_norms,
-        plot_prefix * "_cov_norm.png";
-        method_label=method_label,
-    ))
-    push!(plot_files, section52_plot_grid_vorticity_std(
-        result.sparam,
-        final_ensemble,
-        plot_prefix * "_vorticity_std.png",
-    ))
-    return plot_files
-end
-
-function run_section52_grid_dropout_eaki(;
+function run_grid_dropout_eaki(;
     num_fourier::Int=85,
     nlat::Int=256,
     model_dt::Int=1800,
@@ -597,14 +502,14 @@ function run_section52_grid_dropout_eaki(;
     perturbation_wavenumber::Float64=4.0,
     perturbation_amplitude::Float64=8.0e-5,
     project_initial_ensemble::Bool=true,
-    output_file::String=joinpath(@__DIR__, "Figs", "GridDropoutEAKI_Barotropic_Section52.jls"),
+    output_file::String=joinpath(@__DIR__, "Figs", "GridDropoutEAKI_Barotropic.jls"),
     save_plots::Bool=true,
     plot_prefix::Union{String,Nothing}=nothing,
     inflation::Bool=true,
     use_prior_augmentation::Bool=true,
     store_ensemble_history::Bool=false,
 )
-    sparam, θ_ref = build_section52_grid_dropout_eaki_problem(
+    sparam, θ_ref = build_grid_dropout_eaki_problem(
         num_fourier=num_fourier,
         nlat=nlat,
         model_dt=model_dt,
@@ -623,11 +528,11 @@ function run_section52_grid_dropout_eaki(;
         noise_seed=noise_seed,
     )
 
-    grid_prior, prior_cov_mat, prior_cov_sqrt = section52_grid_prior(
+    grid_prior, prior_cov_mat, prior_cov_sqrt = grid_dropout_eaki_prior(
         sparam;
         prior_cov=prior_cov,
     )
-    θ0, init_prior_cov_mat, init_prior_cov_sqrt, grid_init_cov_sqrt, τ0 = section52_initial_grid_ensemble(
+    θ0, init_prior_cov_mat, init_prior_cov_sqrt, grid_init_cov_sqrt, τ0 = grid_dropout_eaki_initial_ensemble(
         sparam,
         n_ens;
         init_trunc_N=init_trunc_N,
@@ -637,8 +542,9 @@ function run_section52_grid_dropout_eaki(;
     )
 
     forward(θ) = barotropic_u_forward_grid_dropout_eaki(sparam, θ)
+    adaptive_joint = dropout_correction_mode == "joint"
 
-    grid_prior_mean = section52_grid_prior_mean(sparam)
+    grid_prior_mean = barotropic_grid_prior_mean(sparam)
     grid_ekiobj = if use_prior_augmentation
         EKI_Run_Grid_Prior(
             forward,
@@ -653,6 +559,8 @@ function run_section52_grid_dropout_eaki(;
             inflation=inflation,
             dropout_correction_mode=dropout_correction_mode,
             joint_dropout_weight=joint_dropout_weight,
+            joint_weight_mode=adaptive_joint ? "adaptive" : "fixed",
+            mean_line_search=adaptive_joint && inflation,
         )
     else
         EKI_Run(
@@ -667,26 +575,28 @@ function run_section52_grid_dropout_eaki(;
             inflation=inflation,
             dropout_correction_mode=dropout_correction_mode,
             joint_dropout_weight=joint_dropout_weight,
+            joint_weight_mode=adaptive_joint ? "adaptive" : "fixed",
+            mean_line_search=adaptive_joint && inflation,
         )
     end
 
     θ_history = [vec(mean(θ, dims=2)) for θ in grid_ekiobj.θ[2:end]]
-    reconstruct_grid(sparam, θ) = section52_grid_vector_to_vorticity(
+    reconstruct_grid(sparam, θ) = barotropic_grid_vector_to_vorticity(
         sparam,
         θ;
         project_to_model_space=true,
     )
-    vorticity_errors = section52_vorticity_errors(sparam, θ_history, reconstruct_grid)
+    vorticity_errors = barotropic_vorticity_errors(sparam, θ_history, reconstruct_grid)
     data_y_pred = vec.(grid_ekiobj.y_pred[2:end])
-    observation_errors = section52_observation_errors(y_obs, data_y_pred)
-    optimization_errors = section52_grid_optimization_errors(
+    observation_errors = barotropic_observation_errors(y_obs, data_y_pred)
+    optimization_errors = grid_dropout_eaki_optimization_errors(
         grid_ekiobj,
         use_prior_augmentation ? grid_prior : nothing,
     )
-    covariance_norms = section52_grid_lowrank_covariance_norm.(grid_ekiobj.θ)
+    covariance_norms = grid_dropout_eaki_covariance_norm.(grid_ekiobj.θ)
 
     θ_est = vec(mean(grid_ekiobj.θ[end], dims=2))
-    grid_vor_est = section52_grid_vector_to_vorticity(
+    grid_vor_est = barotropic_grid_vector_to_vorticity(
         sparam,
         θ_est;
         project_to_model_space=true,
@@ -737,8 +647,8 @@ function run_section52_grid_dropout_eaki(;
     )
 
     if save_plots
-        prefix = isnothing(plot_prefix) ? section52_default_plot_prefix(output_file) : plot_prefix
-        plot_files = section52_write_grid_dropout_eaki_plots(
+        prefix = isnothing(plot_prefix) ? barotropic_default_plot_prefix(output_file) : plot_prefix
+        plot_files = write_grid_dropout_eaki_plots(
             result,
             grid_ekiobj.θ[end];
             method_label="dropout-EAKI grid",
@@ -753,13 +663,13 @@ function run_section52_grid_dropout_eaki(;
     return result
 end
 
-function run_section52_grid_dropout_eaki_smoke_test(;
+function run_grid_dropout_eaki_smoke_test(;
     output_file::String=joinpath(@__DIR__, "Figs", "GridDropoutEAKI_Barotropic_smoke.jls"),
     save_plots::Bool=false,
     dropout_correction_mode::String="joint",
     joint_dropout_weight::Float64=1.0,
 )
-    return run_section52_grid_dropout_eaki(
+    return run_grid_dropout_eaki(
         num_fourier=8,
         nlat=16,
         model_dt=1800,
@@ -779,6 +689,6 @@ function run_section52_grid_dropout_eaki_smoke_test(;
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    result = run_section52_grid_dropout_eaki_smoke_test()
+    result = run_grid_dropout_eaki_smoke_test()
     @info "Finished Section 5.2 grid dropout-EAKI smoke test" result.rel_vorticity_error result.rel_observation_error result.output_file
 end
