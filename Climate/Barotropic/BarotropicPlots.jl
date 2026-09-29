@@ -1,3 +1,7 @@
+using LinearAlgebra
+using Statistics
+using PyPlot
+
 function barotropic_default_plot_prefix(output_file::String)
     return splitext(output_file)[1]
 end
@@ -6,6 +10,14 @@ function barotropic_meshgrid(mesh::Spectral_Spherical_Mesh)
     lon_deg = mesh.λc .* 180 / pi
     lat_deg = mesh.θc .* 180 / pi
     return repeat(lon_deg, 1, length(lat_deg)), repeat(lat_deg, 1, length(lon_deg))'
+end
+
+function barotropic_save_plot(fig, save_file::String)
+    fig.tight_layout()
+    mkpath(dirname(save_file))
+    fig.savefig(save_file, dpi=180)
+    PyPlot.close(fig)
+    return save_file
 end
 
 function barotropic_plot_field!(fig, ax, mesh, grid_dat; title="", clim=nothing, cmap="viridis", obs_coord=nothing)
@@ -35,11 +47,7 @@ end
 function barotropic_save_single_field(mesh, grid_dat, save_file; title="", clim=nothing, cmap="viridis", obs_coord=nothing)
     fig, axs = PyPlot.subplots(nrows=1, ncols=1, figsize=(7, 4), squeeze=false)
     barotropic_plot_field!(fig, axs[1, 1], mesh, grid_dat; title=title, clim=clim, cmap=cmap, obs_coord=obs_coord)
-    fig.tight_layout()
-    mkpath(dirname(save_file))
-    fig.savefig(save_file, dpi=180)
-    PyPlot.close(fig)
-    return save_file
+    return barotropic_save_plot(fig, save_file)
 end
 
 function barotropic_plot_initial_condition(sparam::Setup_Param, save_file::String)
@@ -58,15 +66,16 @@ function barotropic_plot_initial_condition(sparam::Setup_Param, save_file::Strin
         clim = (minimum(field), maximum(field))
         barotropic_plot_field!(fig, axes[i], sparam.mesh, field; title=title, clim=clim, cmap=cmap)
     end
-    fig.tight_layout()
-    mkpath(dirname(save_file))
-    fig.savefig(save_file, dpi=180)
-    PyPlot.close(fig)
-    return save_file
+    return barotropic_save_plot(fig, save_file)
 end
 
-function barotropic_plot_observation_frames(sparam::Setup_Param, tau_ref, save_file::String)
-    _, obs_raw_data = Barotropic_Main(sparam, tau_ref)
+function barotropic_plot_observation_frames(
+    sparam::Setup_Param,
+    truth,
+    save_file::String;
+    forward::Function=Barotropic_Main,
+)
+    _, obs_raw_data = forward(sparam, truth)
     vel_u_frames = obs_raw_data["vel_u"]
     nframes = length(vel_u_frames)
     clim = (minimum(minimum.(vel_u_frames)), maximum(maximum.(vel_u_frames)))
@@ -85,11 +94,7 @@ function barotropic_plot_observation_frames(sparam::Setup_Param, tau_ref, save_f
             obs_coord=sparam.obs_coord,
         )
     end
-    fig.tight_layout()
-    mkpath(dirname(save_file))
-    fig.savefig(save_file, dpi=180)
-    PyPlot.close(fig)
-    return save_file
+    return barotropic_save_plot(fig, save_file)
 end
 
 function barotropic_plot_recovered_vorticity(sparam::Setup_Param, recovered, save_file::String)
@@ -103,11 +108,7 @@ function barotropic_plot_recovered_vorticity(sparam::Setup_Param, recovered, sav
         barotropic_plot_field!(fig, axs[1, i + 1], sparam.mesh, grid_vor_est; title=label, clim=clim, cmap="viridis")
     end
 
-    fig.tight_layout()
-    mkpath(dirname(save_file))
-    fig.savefig(save_file, dpi=180)
-    PyPlot.close(fig)
-    return save_file
+    return barotropic_save_plot(fig, save_file)
 end
 
 function barotropic_plot_convergence(vorticity_errors, observation_errors, save_file::String; method_label::String)
@@ -124,28 +125,56 @@ function barotropic_plot_convergence(vorticity_errors, observation_errors, save_
     axs[1, 2].set_ylabel("Relative observation error")
     axs[1, 2].legend()
 
-    fig.tight_layout()
-    mkpath(dirname(save_file))
-    fig.savefig(save_file, dpi=180)
-    PyPlot.close(fig)
-    return save_file
+    return barotropic_save_plot(fig, save_file)
 end
 
-function barotropic_plot_covariance_norm(covariance_norms, save_file::String; method_label::String)
-    iterations = collect(0:length(covariance_norms)-1)
+function barotropic_plot_history(values, save_file::String; method_label::String, ylabel::String, first_iteration::Int)
+    iterations = first_iteration:(first_iteration + length(values) - 1)
     fig, ax = PyPlot.subplots(nrows=1, ncols=1, figsize=(6, 4), squeeze=false)
-
-    ax[1, 1].plot(iterations, covariance_norms, linestyle="--", marker="o", fillstyle="none", label=method_label)
+    ax[1, 1].plot(iterations, values, linestyle="--", marker="o", fillstyle="none", label=method_label)
     ax[1, 1].set_xlabel("Iterations")
-    ax[1, 1].set_ylabel("Frobenius norm of covariance")
+    ax[1, 1].set_ylabel(ylabel)
     ax[1, 1].grid()
     ax[1, 1].legend()
+    return barotropic_save_plot(fig, save_file)
+end
 
-    fig.tight_layout()
-    mkpath(dirname(save_file))
-    fig.savefig(save_file, dpi=180)
-    PyPlot.close(fig)
-    return save_file
+barotropic_plot_covariance_norm(values, save_file::String; method_label::String) =
+    barotropic_plot_history(values, save_file; method_label, ylabel="Frobenius norm of covariance", first_iteration=0)
+
+barotropic_plot_optimization_error(values, save_file::String; method_label::String) =
+    barotropic_plot_history(values, save_file; method_label, ylabel="Optimization error", first_iteration=1)
+
+function inflated_eki_plot_prefix(output_file::String, filter_type::String)
+    default_prefix = barotropic_default_plot_prefix(output_file)
+    prefix_name = basename(default_prefix)
+    if startswith(prefix_name, "InflatedEKI_Barotropic")
+        prefix_name = replace(
+            prefix_name,
+            "InflatedEKI_Barotropic" => filter_type * "_Barotropic";
+            count=1,
+        )
+    end
+    return joinpath(dirname(default_prefix), prefix_name)
+end
+
+function write_inflated_eki_plots(result; method_label::String, plot_prefix::String)
+    plot_files = barotropic_write_standard_plots(
+        result;
+        method_label=method_label,
+        plot_prefix=plot_prefix,
+    )
+    push!(plot_files, barotropic_plot_optimization_error(
+        result.optimization_errors,
+        plot_prefix * "_opt_errors.png";
+        method_label=method_label,
+    ))
+    push!(plot_files, barotropic_plot_covariance_norm(
+        result.covariance_norms,
+        plot_prefix * "_cov_norm.png";
+        method_label=method_label,
+    ))
+    return plot_files
 end
 
 function barotropic_vorticity_errors(sparam::Setup_Param, tau_history, reconstruct_func::Function)
@@ -165,18 +194,21 @@ function barotropic_observation_errors(y_obs, y_pred_history)
     return errors
 end
 
-function barotropic_write_standard_plots(result; method_label::String, plot_prefix::String)
+function barotropic_write_standard_plots(
+    result;
+    method_label::String,
+    plot_prefix::String,
+    observation_forward::Function=Barotropic_Main,
+    observation_truth=result.tau_ref,
+)
     plot_files = String[]
     push!(plot_files, barotropic_plot_initial_condition(result.sparam, plot_prefix * "_initial_condition.png"))
-    # push!(plot_files, barotropic_save_single_field(
-    #     result.sparam.mesh,
-    #     result.sparam.grid_vor,
-    #     plot_prefix * "_initial_vorticity.png";
-    #     title="Initial vorticity",
-    #     clim=(minimum(result.sparam.grid_vor), maximum(result.sparam.grid_vor)),
-    #     cmap="viridis",
-    # ))
-    push!(plot_files, barotropic_plot_observation_frames(result.sparam, result.tau_ref, plot_prefix * "_zonal_velocity_observations.png"))
+    push!(plot_files, barotropic_plot_observation_frames(
+        result.sparam,
+        observation_truth,
+        plot_prefix * "_zonal_velocity_observations.png";
+        forward=observation_forward,
+    ))
     push!(plot_files, barotropic_plot_recovered_vorticity(result.sparam, [(method_label, result.grid_vor_est)], plot_prefix * "_recovered_vorticity.png"))
     push!(plot_files, barotropic_plot_convergence(
         result.vorticity_errors,
@@ -185,50 +217,6 @@ function barotropic_write_standard_plots(result; method_label::String, plot_pref
         method_label=method_label,
     ))
     return plot_files
-end
-
-function grid_dropout_eaki_plot_optimization_error(optimization_errors, save_file::String; method_label::String)
-    iterations = collect(1:length(optimization_errors))
-    fig, ax = PyPlot.subplots(nrows=1, ncols=1, figsize=(6, 4), squeeze=false)
-
-    ax[1, 1].plot(iterations, optimization_errors, linestyle="--", marker="o", fillstyle="none", label=method_label)
-    ax[1, 1].set_xlabel("Iterations")
-    ax[1, 1].set_ylabel("Optimization error")
-    ax[1, 1].grid()
-    ax[1, 1].legend()
-
-    fig.tight_layout()
-    mkpath(dirname(save_file))
-    fig.savefig(save_file, dpi=180)
-    PyPlot.close(fig)
-    return save_file
-end
-
-function grid_dropout_eaki_plot_observation_frames(sparam::Setup_Param, grid_vor_ref, save_file::String)
-    _, obs_raw_data = Barotropic_Main_Grid(sparam, grid_vor_ref)
-    vel_u_frames = obs_raw_data["vel_u"]
-    nframes = length(vel_u_frames)
-    clim = (minimum(minimum.(vel_u_frames)), maximum(maximum.(vel_u_frames)))
-
-    fig, axs = PyPlot.subplots(nrows=1, ncols=nframes, figsize=(6nframes, 4), squeeze=false)
-    for i in 1:nframes
-        obs_hour = round(i * sparam.obs_time / 3600; digits=2)
-        barotropic_plot_field!(
-            fig,
-            axs[1, i],
-            sparam.mesh,
-            vel_u_frames[i];
-            title="Zonal velocity, T=$(obs_hour)h",
-            clim=clim,
-            cmap="viridis",
-            obs_coord=sparam.obs_coord,
-        )
-    end
-    fig.tight_layout()
-    mkpath(dirname(save_file))
-    fig.savefig(save_file, dpi=180)
-    PyPlot.close(fig)
-    return save_file
 end
 
 function grid_dropout_eaki_plot_vorticity_std(sparam::Setup_Param, theta_ensemble, save_file::String)
@@ -244,25 +232,14 @@ function grid_dropout_eaki_plot_vorticity_std(sparam::Setup_Param, theta_ensembl
 end
 
 function write_grid_dropout_eaki_plots(result, final_ensemble; method_label::String, plot_prefix::String)
-    plot_files = String[]
-    push!(plot_files, barotropic_plot_initial_condition(result.sparam, plot_prefix * "_initial_condition.png"))
-    push!(plot_files, grid_dropout_eaki_plot_observation_frames(
-        result.sparam,
-        result.sparam.grid_vor,
-        plot_prefix * "_zonal_velocity_observations.png",
-    ))
-    push!(plot_files, barotropic_plot_recovered_vorticity(
-        result.sparam,
-        [(method_label, result.grid_vor_est)],
-        plot_prefix * "_recovered_vorticity.png",
-    ))
-    push!(plot_files, barotropic_plot_convergence(
-        result.vorticity_errors,
-        result.observation_errors,
-        plot_prefix * "_convergence.png";
+    plot_files = barotropic_write_standard_plots(
+        result;
         method_label=method_label,
-    ))
-    push!(plot_files, grid_dropout_eaki_plot_optimization_error(
+        plot_prefix=plot_prefix,
+        observation_forward=Barotropic_Main_Grid,
+        observation_truth=result.sparam.grid_vor,
+    )
+    push!(plot_files, barotropic_plot_optimization_error(
         result.optimization_errors,
         plot_prefix * "_opt_errors.png";
         method_label=method_label,
