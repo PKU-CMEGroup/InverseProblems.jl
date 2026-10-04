@@ -34,6 +34,15 @@ function augment_observations_with_prior_inflated_eki(y_obs, obs_cov, prior_mean
     return y_aug, obs_cov_aug
 end
 
+function inflated_eki_prior_covariance_factor(n_param::Int, prior_cov)
+    covariance = isnothing(prior_cov) ? Diagonal(fill(9.0, n_param)) : prior_cov
+    size(covariance) == (n_param, n_param) ||
+        throw(DimensionMismatch("prior covariance must be $(n_param) x $(n_param)"))
+    covariance_sqrt = covariance isa Diagonal ?
+        Diagonal(sqrt.(diag(covariance))) : cholesky(Symmetric(covariance)).L
+    return covariance, covariance_sqrt
+end
+
 function build_inflated_eki_problem(;
     num_fourier::Int=85,
     nlat::Int=256,
@@ -136,13 +145,10 @@ function inflated_eki_initial_ensemble(
 )
     1 <= init_trunc_N <= sparam.trunc_N ||
         throw(ArgumentError("init_trunc_N must lie in 1:$(sparam.trunc_N)"))
-    # covariance = isnothing(init_prior_cov) ?
-    #     barotropic_power_law_prior_cov(init_trunc_N; sigma=3.0, alpha=0.0) :
-    #     init_prior_cov
-    covariance = barotropic_heat_prior_cov(init_trunc_N; sigma=3.0, beta=0.02, variance_floor=1.0e-6,)
-    init_prior_cov_mat, init_prior_cov_sqrt = barotropic_prior_covariance_factor(
-        init_trunc_N;
-        prior_cov=covariance,
+    init_n_param = init_trunc_N * (init_trunc_N + 2)
+    init_prior_cov_mat, init_prior_cov_sqrt = inflated_eki_prior_covariance_factor(
+        init_n_param,
+        init_prior_cov,
     )
 
     rng = MersenneTwister(ensemble_seed)
@@ -230,13 +236,8 @@ function run_inflated_eki(;
 
     n_param = sparam.N_θ
     prior_mean_vec = isnothing(prior_mean) ? zeros(Float64, n_param) : copy(prior_mean)
-    # prior_covariance = isnothing(prior_cov) ?
-    #     barotropic_power_law_prior_cov(trunc_N; sigma=3.0, alpha=0.0) : prior_cov
-    prior_covariance = barotropic_heat_prior_cov(trunc_N; sigma=3.0, beta=0.02, variance_floor=1.0e-6,)
-    prior_cov_mat, prior_cov_sqrt_mat = barotropic_prior_covariance_factor(
-        trunc_N;
-        prior_cov=prior_covariance,
-    )
+    prior_cov_mat, prior_cov_sqrt_mat =
+        inflated_eki_prior_covariance_factor(n_param, prior_cov)
     @assert length(prior_mean_vec) == n_param "prior_mean must have length $(n_param)."
     @assert size(prior_cov_mat) == (n_param, n_param) "prior_cov must be $(n_param) x $(n_param)."
 
@@ -332,27 +333,106 @@ function run_inflated_eki(;
     return result
 end
 
-function run_inflated_eki_smoke_test(;
-    output_file::String=joinpath(@__DIR__, "Figs", "InflatedEKI_Barotropic_smoke.jls"),
+function run_inflated_eki_comparison(;
+    num_fourier::Int=85,
+    nlat::Int=256,
+    model_dt::Int=1800,
+    end_time::Int=86400,
+    n_obs_frames::Int=2,
+    nobs::Int=50,
+    inflation_dt::Float64=0.5,
+    noise_level::Float64=0.05,
+    noise_seed::Int=123,
+    obs_seed::Int=42,
+    ensemble_seed::Int=123,
+    perturbation_wavenumber::Float64=4.0,
+    perturbation_amplitude::Float64=8.0e-5,
+    filter_type::String="dropout-EAKI",
+    dropout_rate::Float64=0.3,
+    dropout_correction_mode::String="joint",
+    joint_dropout_weight::Float64=1.0,
+    project_initial_ensemble::Bool=true,
+    output_file::String=joinpath(@__DIR__, "Figs", "InflatedEKI_Barotropic_comparison.jls"),
+    save_plots::Bool=true,
+    plot_prefix::Union{String,Nothing}=nothing,
+    inflation::Bool=true,
 )
-    return run_inflated_eki(
-        num_fourier=8,
-        nlat=16,
-        model_dt=1800,
-        end_time=3600,
-        n_obs_frames=1,
-        nobs=4,
-        trunc_N=2,
-        init_trunc_N=2,
-        n_iter=1,
-        n_ens=17,
-        perturbation_wavenumber=2.0,
-        filter_type="dropout-EAKI",
-        output_file=output_file,
+    trunc_N = 7
+    n_param = trunc_N * (trunc_N + 2)
+    prior_mean = zeros(Float64, n_param)
+    covariance = Diagonal(fill(9.0, n_param))
+    specifications = (
+        (id="Nens30_Niter20", label="J=30, Iteration=20", n_ens=30, n_iter=20),
+        (id="Nens60_Niter10", label="J=60, Iteration=10", n_ens=60, n_iter=10),
     )
-end
 
-if abspath(PROGRAM_FILE) == @__FILE__
-    result = run_inflated_eki_smoke_test()
-    @info "Finished inflated EKI smoke test" result.rel_vorticity_error result.rel_observation_error result.output_file
+    output_stem = splitext(output_file)[1]
+    cases = NamedTuple[]
+    for specification in specifications
+        case_output_file = output_stem * "_" * specification.id * ".jls"
+        case_result = run_inflated_eki(
+            num_fourier=num_fourier,
+            nlat=nlat,
+            model_dt=model_dt,
+            end_time=end_time,
+            n_obs_frames=n_obs_frames,
+            nobs=nobs,
+            trunc_N=trunc_N,
+            init_trunc_N=trunc_N,
+            n_iter=specification.n_iter,
+            n_ens=specification.n_ens,
+            inflation_dt=inflation_dt,
+            noise_level=noise_level,
+            noise_seed=noise_seed,
+            obs_seed=obs_seed,
+            ensemble_seed=ensemble_seed,
+            prior_mean=prior_mean,
+            prior_cov=covariance,
+            init_prior_cov=covariance,
+            perturbation_wavenumber=perturbation_wavenumber,
+            perturbation_amplitude=perturbation_amplitude,
+            filter_type=filter_type,
+            dropout_rate=dropout_rate,
+            dropout_correction_mode=dropout_correction_mode,
+            joint_dropout_weight=joint_dropout_weight,
+            project_initial_ensemble=project_initial_ensemble,
+            output_file=case_output_file,
+            save_plots=false,
+            inflation=inflation,
+        )
+        push!(cases, (
+            label=specification.label,
+            specification=specification,
+            result=case_result,
+        ))
+    end
+
+    @assert cases[1].result.tau_ref == cases[2].result.tau_ref
+    @assert cases[1].result.y_obs == cases[2].result.y_obs
+    @assert diag(cases[1].result.prior_cov) == diag(covariance)
+    @assert diag(cases[2].result.prior_cov) == diag(covariance)
+    @assert diag(cases[1].result.init_prior_cov) == diag(covariance)
+    @assert diag(cases[2].result.init_prior_cov) == diag(covariance)
+
+    comparison = (
+        cases=cases,
+        specifications=specifications,
+        trunc_N=trunc_N,
+        init_trunc_N=trunc_N,
+        prior_mean=prior_mean,
+        prior_cov=covariance,
+        init_prior_cov=covariance,
+        output_file=output_file,
+        plot_files=String[],
+    )
+
+    if save_plots
+        prefix = isnothing(plot_prefix) ? inflated_eki_plot_prefix(output_file, filter_type) : plot_prefix
+        plot_files = write_inflated_eki_comparison_plots(cases; plot_prefix=prefix)
+        comparison = merge(comparison, (plot_files=plot_files,))
+    end
+
+    mkpath(dirname(output_file))
+    serialize(output_file, comparison)
+    return comparison
 end

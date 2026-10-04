@@ -111,6 +111,27 @@ function barotropic_plot_recovered_vorticity(sparam::Setup_Param, recovered, sav
     return barotropic_save_plot(fig, save_file)
 end
 
+function barotropic_plot_recovered_vorticity_comparison(cases, save_file::String)
+    ncases = length(cases)
+    truths = [case.result.sparam.grid_vor for case in cases]
+    clim = (minimum(minimum.(truths)), maximum(maximum.(truths)))
+    fig, axs = PyPlot.subplots(nrows=1, ncols=ncases, figsize=(6ncases, 4), squeeze=false)
+
+    for (j, case) in enumerate(cases)
+        result = case.result
+        barotropic_plot_field!(
+            fig,
+            axs[1, j],
+            result.sparam.mesh,
+            result.grid_vor_est;
+            title="$(result.filter_type)\n$(case.label)",
+            clim=clim,
+            cmap="viridis",
+        )
+    end
+    return barotropic_save_plot(fig, save_file)
+end
+
 function barotropic_plot_convergence(vorticity_errors, observation_errors, save_file::String; method_label::String)
     fig, axs = PyPlot.subplots(nrows=1, ncols=2, figsize=(10, 4), squeeze=false)
     iterations = collect(1:length(vorticity_errors))
@@ -128,6 +149,28 @@ function barotropic_plot_convergence(vorticity_errors, observation_errors, save_
     return barotropic_save_plot(fig, save_file)
 end
 
+function barotropic_plot_convergence_comparison(cases, save_file::String)
+    ncases = length(cases)
+    fig, axs = PyPlot.subplots(nrows=2, ncols=ncases, figsize=(6ncases, 8), squeeze=false)
+
+    for (j, case) in enumerate(cases)
+        result = case.result
+        iterations = collect(1:length(result.vorticity_errors))
+
+        axs[1, j].plot(iterations, result.vorticity_errors, marker="o")
+        axs[1, j].set_title(case.label)
+        axs[1, j].set_xlabel("Iterations")
+        axs[1, j].set_ylabel("Relative L2 error")
+        axs[1, j].grid()
+
+        axs[2, j].semilogy(iterations, result.observation_errors, marker="o")
+        axs[2, j].set_xlabel("Iterations")
+        axs[2, j].set_ylabel("Relative observation error")
+        axs[2, j].grid()
+    end
+    return barotropic_save_plot(fig, save_file)
+end
+
 function barotropic_plot_history(values, save_file::String; method_label::String, ylabel::String, first_iteration::Int)
     iterations = first_iteration:(first_iteration + length(values) - 1)
     fig, ax = PyPlot.subplots(nrows=1, ncols=1, figsize=(6, 4), squeeze=false)
@@ -136,6 +179,36 @@ function barotropic_plot_history(values, save_file::String; method_label::String
     ax[1, 1].set_ylabel(ylabel)
     ax[1, 1].grid()
     ax[1, 1].legend()
+    return barotropic_save_plot(fig, save_file)
+end
+
+function barotropic_plot_covariance_norm_comparison(cases, save_file::String)
+    ncases = length(cases)
+    fig, axs = PyPlot.subplots(nrows=1, ncols=ncases, figsize=(6ncases, 4), squeeze=false)
+    for (j, case) in enumerate(cases)
+        values = case.result.covariance_norms
+        iterations = 0:(length(values) - 1)
+        axs[1, j].plot(iterations, values, linestyle="--", marker="o", fillstyle="none")
+        axs[1, j].set_title(case.label)
+        axs[1, j].set_xlabel("Iterations")
+        axs[1, j].set_ylabel("Frobenius norm of covariance")
+        axs[1, j].grid()
+    end
+    return barotropic_save_plot(fig, save_file)
+end
+
+function barotropic_plot_optimization_error_comparison(cases, save_file::String)
+    ncases = length(cases)
+    fig, axs = PyPlot.subplots(nrows=1, ncols=ncases, figsize=(6ncases, 4), squeeze=false)
+    for (j, case) in enumerate(cases)
+        values = case.result.optimization_errors
+        iterations = 1:length(values)
+        axs[1, j].plot(iterations, values, linestyle="--", marker="o", fillstyle="none")
+        axs[1, j].set_title(case.label)
+        axs[1, j].set_xlabel("Iterations")
+        axs[1, j].set_ylabel("Optimization error")
+        axs[1, j].grid()
+    end
     return barotropic_save_plot(fig, save_file)
 end
 
@@ -174,7 +247,61 @@ function write_inflated_eki_plots(result; method_label::String, plot_prefix::Str
         plot_prefix * "_cov_norm.png";
         method_label=method_label,
     ))
+    push!(plot_files, inflated_eki_plot_vorticity_std(
+        result.sparam,
+        result.inflated_ekiobj.θ[end],
+        plot_prefix * "_vorticity_std.png",
+    ))
     return plot_files
+end
+
+function inflated_eki_plot_vorticity_std(sparam::Setup_Param, tau_ensemble, save_file::String)
+    grid_std = inflated_eki_vorticity_std(sparam, tau_ensemble)
+    return barotropic_save_single_field(
+        sparam.mesh,
+        grid_std,
+        save_file;
+        title="Final vorticity standard deviation",
+        clim=(0.0, maximum(grid_std)),
+        cmap="viridis",
+    )
+end
+
+function inflated_eki_vorticity_std(sparam::Setup_Param, tau_ensemble)
+    n_ens = size(tau_ensemble, 2)
+    n_ens > 1 || throw(ArgumentError("vorticity standard deviation requires at least two ensemble members"))
+
+    mean_field = zeros(Float64, size(sparam.grid_vor))
+    m2 = zeros(Float64, size(sparam.grid_vor))
+    for j in 1:n_ens
+        field = reconstruct_initial_vorticity_inflated_eki(sparam, view(tau_ensemble, :, j))
+        delta = field .- mean_field
+        mean_field .+= delta ./ j
+        m2 .+= delta .* (field .- mean_field)
+    end
+    return sqrt.(max.(m2 ./ (n_ens - 1), 0.0))
+end
+
+function inflated_eki_plot_vorticity_std_comparison(cases, save_file::String)
+    grid_stds = [
+        inflated_eki_vorticity_std(case.result.sparam, case.result.inflated_ekiobj.θ[end])
+        for case in cases
+    ]
+    ncases = length(cases)
+    fig, axs = PyPlot.subplots(nrows=1, ncols=ncases, figsize=(6ncases, 4), squeeze=false)
+
+    for (j, case) in enumerate(cases)
+        barotropic_plot_field!(
+            fig,
+            axs[1, j],
+            case.result.sparam.mesh,
+            grid_stds[j];
+            title="Final vorticity standard deviation\n$(case.label)",
+            clim=(0.0, maximum(grid_stds[j])),
+            cmap="viridis",
+        )
+    end
+    return barotropic_save_plot(fig, save_file)
 end
 
 function barotropic_vorticity_errors(sparam::Setup_Param, tau_history, reconstruct_func::Function)
@@ -219,39 +346,36 @@ function barotropic_write_standard_plots(
     return plot_files
 end
 
-function grid_dropout_eaki_plot_vorticity_std(sparam::Setup_Param, theta_ensemble, save_file::String)
-    grid_std = reshape(vec(std(theta_ensemble; dims=2)), size(sparam.grid_vor))
-    return barotropic_save_single_field(
-        sparam.mesh,
-        grid_std,
-        save_file;
-        title="Final vorticity standard deviation",
-        clim=(0.0, maximum(grid_std)),
-        cmap="viridis",
-    )
-end
-
-function write_grid_dropout_eaki_plots(result, final_ensemble; method_label::String, plot_prefix::String)
-    plot_files = barotropic_write_standard_plots(
-        result;
-        method_label=method_label,
-        plot_prefix=plot_prefix,
-        observation_forward=Barotropic_Main_Grid,
-        observation_truth=result.sparam.grid_vor,
-    )
-    push!(plot_files, barotropic_plot_optimization_error(
-        result.optimization_errors,
-        plot_prefix * "_opt_errors.png";
-        method_label=method_label,
+function write_inflated_eki_comparison_plots(cases; plot_prefix::String)
+    reference = first(cases).result
+    plot_files = String[]
+    push!(plot_files, barotropic_plot_initial_condition(
+        reference.sparam,
+        plot_prefix * "_initial_condition.png",
     ))
-    push!(plot_files, barotropic_plot_covariance_norm(
-        result.covariance_norms,
-        plot_prefix * "_cov_norm.png";
-        method_label=method_label,
+    push!(plot_files, barotropic_plot_observation_frames(
+        reference.sparam,
+        reference.tau_ref,
+        plot_prefix * "_zonal_velocity_observations.png",
     ))
-    push!(plot_files, grid_dropout_eaki_plot_vorticity_std(
-        result.sparam,
-        final_ensemble,
+    push!(plot_files, barotropic_plot_recovered_vorticity_comparison(
+        cases,
+        plot_prefix * "_recovered_vorticity.png",
+    ))
+    push!(plot_files, barotropic_plot_convergence_comparison(
+        cases,
+        plot_prefix * "_convergence.png",
+    ))
+    push!(plot_files, barotropic_plot_optimization_error_comparison(
+        cases,
+        plot_prefix * "_opt_errors.png",
+    ))
+    push!(plot_files, barotropic_plot_covariance_norm_comparison(
+        cases,
+        plot_prefix * "_cov_norm.png",
+    ))
+    push!(plot_files, inflated_eki_plot_vorticity_std_comparison(
+        cases,
         plot_prefix * "_vorticity_std.png",
     ))
     return plot_files
