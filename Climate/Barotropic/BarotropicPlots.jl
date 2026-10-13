@@ -124,7 +124,7 @@ function barotropic_plot_recovered_vorticity_comparison(cases, save_file::String
             axs[1, j],
             result.sparam.mesh,
             result.grid_vor_est;
-            title="$(result.filter_type)\n$(case.label)",
+            title=barotropic_comparison_case_title(case),
             clim=clim,
             cmap="viridis",
         )
@@ -149,26 +149,53 @@ function barotropic_plot_convergence(vorticity_errors, observation_errors, save_
     return barotropic_save_plot(fig, save_file)
 end
 
-function barotropic_plot_convergence_comparison(cases, save_file::String)
-    ncases = length(cases)
-    fig, axs = PyPlot.subplots(nrows=2, ncols=ncases, figsize=(6ncases, 8), squeeze=false)
+barotropic_comparison_case_title(case) = case.label
 
-    for (j, case) in enumerate(cases)
+function barotropic_error_comparison_figure(cases)
+    fig, axs = PyPlot.subplots(nrows=1, ncols=2, figsize=(10, 4), squeeze=false)
+    relative_error_ax = axs[1, 1]
+    optimization_error_ax = axs[1, 2]
+
+    for (i, case) in enumerate(cases)
         result = case.result
-        iterations = collect(1:length(result.vorticity_errors))
+        n_ens = case.specification.n_ens
+        n_iter = length(result.vorticity_errors)
+        forward_evaluations = collect(0:n_ens:n_ens * n_iter)
+        color = "C$(i - 1)"
+        style = (
+            linestyle="--",
+            marker="o",
+            fillstyle="none",
+            color=color,
+            label=barotropic_comparison_case_title(case),
+        )
 
-        axs[1, j].plot(iterations, result.vorticity_errors, marker="o")
-        axs[1, j].set_title(case.label)
-        axs[1, j].set_xlabel("Iterations")
-        axs[1, j].set_ylabel("Relative L2 error")
-        axs[1, j].grid()
-
-        axs[2, j].semilogy(iterations, result.observation_errors, marker="o")
-        axs[2, j].set_xlabel("Iterations")
-        axs[2, j].set_ylabel("Relative observation error")
-        axs[2, j].grid()
+        relative_error_ax.plot(
+            forward_evaluations,
+            vcat(result.initial_vorticity_error, result.vorticity_errors);
+            style...,
+        )
+        optimization_error_ax.plot(
+            forward_evaluations,
+            vcat(result.initial_optimization_error, result.optimization_errors);
+            style...,
+        )
     end
-    return barotropic_save_plot(fig, save_file)
+
+    for (ax, ylabel) in (
+        (relative_error_ax, "Relative L2 error"),
+        (optimization_error_ax, "Optimization error"),
+    )
+        ax.set_xlabel("Forward model evaluations")
+        ax.set_ylabel(ylabel)
+        ax.grid()
+        ax.legend()
+    end
+    return fig
+end
+
+function barotropic_plot_convergence_comparison(cases, save_file::String)
+    return barotropic_save_plot(barotropic_error_comparison_figure(cases), save_file)
 end
 
 function barotropic_plot_history(values, save_file::String; method_label::String, ylabel::String, first_iteration::Int)
@@ -229,6 +256,26 @@ function inflated_eki_plot_prefix(output_file::String, filter_type::String)
         )
     end
     return joinpath(dirname(default_prefix), prefix_name)
+end
+
+function inflated_eki_comparison_plot_prefix(
+    prefix_source::String,
+    filter_type::String;
+    strip_extension::Bool,
+)
+    prefix = strip_extension ? barotropic_default_plot_prefix(prefix_source) : prefix_source
+    prefix_name = basename(prefix)
+    if strip_extension && startswith(prefix_name, "InflatedEKI_Barotropic")
+        plot_method_name = filter_type == "dropout-EAKI" ? "IPD-EAKI" : filter_type
+        prefix_name = replace(
+            prefix_name,
+            "InflatedEKI_Barotropic" => plot_method_name * "_Barotropic";
+            count=1,
+        )
+    elseif filter_type == "dropout-EAKI"
+        prefix_name = replace(prefix_name, "dropout-EAKI" => "IPD-EAKI")
+    end
+    return joinpath(dirname(prefix), prefix_name)
 end
 
 function write_inflated_eki_plots(result; method_label::String, plot_prefix::String)
@@ -296,7 +343,7 @@ function inflated_eki_plot_vorticity_std_comparison(cases, save_file::String)
             axs[1, j],
             case.result.sparam.mesh,
             grid_stds[j];
-            title="Final vorticity standard deviation\n$(case.label)",
+            title=barotropic_comparison_case_title(case),
             clim=(0.0, maximum(grid_stds[j])),
             cmap="viridis",
         )
@@ -365,10 +412,6 @@ function write_inflated_eki_comparison_plots(cases; plot_prefix::String)
     push!(plot_files, barotropic_plot_convergence_comparison(
         cases,
         plot_prefix * "_convergence.png",
-    ))
-    push!(plot_files, barotropic_plot_optimization_error_comparison(
-        cases,
-        plot_prefix * "_opt_errors.png",
     ))
     push!(plot_files, barotropic_plot_covariance_norm_comparison(
         cases,

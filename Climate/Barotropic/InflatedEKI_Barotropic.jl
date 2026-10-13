@@ -120,6 +120,16 @@ function make_noisy_observations_inflated_eki(
     return y_ref, y_obs, obs_cov
 end
 
+function inflated_eki_problem_data(;
+    noise_level::Float64, noise_seed::Int, problem_kwargs...)
+    sparam, tau_ref = build_inflated_eki_problem(; problem_kwargs...)
+    y_ref, y_obs, obs_cov = make_noisy_observations_inflated_eki(
+        sparam, tau_ref; noise_level, noise_seed,
+    )
+    return (; sparam, tau_ref, y_ref, y_obs, obs_cov,
+        rng_state=copy(Random.default_rng()))
+end
+
 function reconstruct_initial_vorticity_inflated_eki(sparam::Setup_Param, tau)
     spe_vor = copy(sparam.spe_vor)
     grid_vor = copy(sparam.grid_vor)
@@ -142,6 +152,7 @@ function inflated_eki_initial_ensemble(
     init_prior_cov::Union{Diagonal,Matrix,Nothing}=nothing,
     project_to_model_space::Bool=true,
     ensemble_seed::Int=123,
+    initial_tau0::Union{AbstractMatrix{Float64},Nothing}=nothing,
 )
     1 <= init_trunc_N <= sparam.trunc_N ||
         throw(ArgumentError("init_trunc_N must lie in 1:$(sparam.trunc_N)"))
@@ -151,8 +162,15 @@ function inflated_eki_initial_ensemble(
         init_prior_cov,
     )
 
-    rng = MersenneTwister(ensemble_seed)
-    tau0 = init_prior_cov_sqrt * randn(rng, size(init_prior_cov_sqrt, 2), n_ens)
+    if isnothing(initial_tau0)
+        rng = MersenneTwister(ensemble_seed)
+        tau0 = init_prior_cov_sqrt * randn(rng, size(init_prior_cov_sqrt, 2), n_ens)
+    else
+        size(initial_tau0) == (init_n_param, n_ens) || throw(DimensionMismatch(
+            "initial_tau0 must have size ($(init_n_param), $(n_ens))",
+        ))
+        tau0 = Matrix{Float64}(initial_tau0)
+    end
     theta0 = zeros(Float64, sparam.N_θ, n_ens)
     if project_to_model_space
         for j in axes(theta0, 2)
@@ -184,55 +202,13 @@ function inflated_ensemble_covariance_norm(θ::AbstractMatrix)
     return norm(Z' * Z)
 end
 
-function run_inflated_eki(;
-    num_fourier::Int=85,
-    nlat::Int=256,
-    model_dt::Int=1800,
-    end_time::Int=86400,
-    n_obs_frames::Int=2,
-    nobs::Int=50,
-    trunc_N::Int=85,
-    init_trunc_N::Int=7,
-    n_iter::Int=20,
-    n_ens::Int=60,
-    inflation_dt::Float64=0.5,
-    noise_level::Float64=0.05,
-    noise_seed::Int=123,
-    obs_seed::Int=42,
-    ensemble_seed::Int=123,
-    prior_mean::Union{Vector{Float64},Nothing}=nothing,
-    prior_cov::Union{Diagonal,Matrix,Nothing}=nothing,
-    init_prior_cov::Union{Diagonal,Matrix,Nothing}=nothing,
-    perturbation_wavenumber::Float64=4.0,
-    perturbation_amplitude::Float64=8.0e-5,
-    filter_type::String="dropout-EAKI",
-    dropout_rate::Float64=0.3,
-    dropout_correction_mode::String="joint",
-    joint_dropout_weight::Float64=1.0,
-    project_initial_ensemble::Bool=true,
-    output_file::String=joinpath(@__DIR__, "Figs", "InflatedEKI_Barotropic.jls"),
-    save_plots::Bool=true,
-    plot_prefix::Union{String,Nothing}=nothing,
-    inflation::Bool=true,
-)
-    sparam, tau_ref = build_inflated_eki_problem(
-        num_fourier=num_fourier,
-        nlat=nlat,
-        model_dt=model_dt,
-        end_time=end_time,
-        n_obs_frames=n_obs_frames,
-        nobs=nobs,
-        trunc_N=trunc_N,
-        obs_seed=obs_seed,
-        perturbation_wavenumber=perturbation_wavenumber,
-        perturbation_amplitude=perturbation_amplitude,
-    )
-    y_ref, y_obs, obs_cov = make_noisy_observations_inflated_eki(
-        sparam,
-        tau_ref;
-        noise_level=noise_level,
-        noise_seed=noise_seed,
-    )
+function run_inflated_eki_case(problem, options)
+    (; sparam, tau_ref, y_ref, y_obs, obs_cov, rng_state) = problem
+    (; init_trunc_N, n_iter, n_ens, inflation_dt, ensemble_seed, initial_tau0,
+        prior_mean, prior_cov, init_prior_cov, filter_type, dropout_rate,
+        dropout_correction_mode, joint_dropout_weight, project_initial_ensemble,
+        output_file, save_plots, plot_prefix, inflation) = options
+    Random.copy!(Random.default_rng(), rng_state)
 
     n_param = sparam.N_θ
     prior_mean_vec = isnothing(prior_mean) ? zeros(Float64, n_param) : copy(prior_mean)
@@ -251,6 +227,7 @@ function run_inflated_eki(;
         init_prior_cov=init_prior_cov,
         project_to_model_space=project_initial_ensemble,
         ensemble_seed=ensemble_seed,
+        initial_tau0=initial_tau0,
     )
     forward(tau) = barotropic_u_prior_forward_inflated_eki(sparam, tau)
 
@@ -268,6 +245,12 @@ function run_inflated_eki(;
         joint_dropout_weight=joint_dropout_weight,
     )
 
+    initial_tau = dropdims(mean(inflated_ekiobj.θ[1], dims=2), dims=2)
+    initial_vorticity_error = only(barotropic_vorticity_errors(
+        sparam,
+        [initial_tau],
+        reconstruct_initial_vorticity_inflated_eki,
+    ))
     tau_history = [dropdims(mean(θ, dims=2), dims=2) for θ in inflated_ekiobj.θ[2:end]]
     vorticity_errors = barotropic_vorticity_errors(sparam, tau_history, reconstruct_initial_vorticity_inflated_eki)
     data_y_pred = [
@@ -275,7 +258,9 @@ function run_inflated_eki(;
         for y_pred in inflated_ekiobj.y_pred[2:end]
     ]
     observation_errors = barotropic_observation_errors(y_obs, data_y_pred)
-    optimization_errors = opt_errors(inflated_ekiobj)[2:end]
+    optimization_error_history = opt_errors(inflated_ekiobj)
+    initial_optimization_error = first(optimization_error_history)
+    optimization_errors = optimization_error_history[2:end]
     covariance_norms = inflated_ensemble_covariance_norm.(inflated_ekiobj.θ)
 
     tau_est = inflated_ensemble_mean(inflated_ekiobj)
@@ -283,37 +268,22 @@ function run_inflated_eki(;
     rel_vorticity_error = norm(grid_vor_est - sparam.grid_vor) / norm(sparam.grid_vor)
     rel_observation_error = norm(y_obs - data_y_pred[end]) / norm(y_obs)
 
-    result = (
-        sparam=sparam,
-        tau_ref=tau_ref,
-        y_ref=y_ref,
-        y_obs=y_obs,
-        obs_cov=obs_cov,
-        y_inflated_eki=y_inflated_eki,
-        obs_cov_inflated_eki=obs_cov_inflated_eki,
+    result = (;
+        sparam, tau_ref, y_ref, y_obs, obs_cov,
+        y_inflated_eki, obs_cov_inflated_eki,
         prior_mean=prior_mean_vec,
         prior_cov=prior_cov_mat,
         prior_cov_sqrt=prior_cov_sqrt_mat,
-        init_trunc_N=init_trunc_N,
+        init_trunc_N,
         init_prior_cov=init_prior_cov_mat,
-        init_prior_cov_sqrt=init_prior_cov_sqrt,
-        tau0=tau0,
-        theta0=θ0,
-        project_initial_ensemble=project_initial_ensemble,
-        inflated_ekiobj=inflated_ekiobj,
-        tau_est=tau_est,
-        grid_vor_est=grid_vor_est,
-        vorticity_errors=vorticity_errors,
-        observation_errors=observation_errors,
-        optimization_errors=optimization_errors,
-        covariance_norms=covariance_norms,
-        rel_vorticity_error=rel_vorticity_error,
-        rel_observation_error=rel_observation_error,
-        filter_type=filter_type,
-        dropout_rate=dropout_rate,
-        dropout_correction_mode=dropout_correction_mode,
-        joint_dropout_weight=joint_dropout_weight,
-        output_file=output_file,
+        init_prior_cov_sqrt,
+        tau0, theta0=θ0, project_initial_ensemble,
+        inflated_ekiobj, tau_est, grid_vor_est,
+        initial_vorticity_error, vorticity_errors, observation_errors,
+        initial_optimization_error, optimization_errors, covariance_norms,
+        rel_vorticity_error, rel_observation_error,
+        filter_type, dropout_rate, dropout_correction_mode, joint_dropout_weight,
+        output_file,
         plot_files=String[],
     )
 
@@ -331,6 +301,70 @@ function run_inflated_eki(;
     serialize(output_file, result)
 
     return result
+end
+
+function run_inflated_eki(;
+    num_fourier::Int=85,
+    nlat::Int=256,
+    model_dt::Int=1800,
+    end_time::Int=86400,
+    n_obs_frames::Int=2,
+    nobs::Int=50,
+    trunc_N::Int=85,
+    init_trunc_N::Int=7,
+    n_iter::Int=20,
+    n_ens::Int=60,
+    inflation_dt::Float64=0.5,
+    noise_level::Float64=0.05,
+    noise_seed::Int=123,
+    obs_seed::Int=42,
+    ensemble_seed::Int=123,
+    initial_tau0::Union{AbstractMatrix{Float64},Nothing}=nothing,
+    prior_mean::Union{Vector{Float64},Nothing}=nothing,
+    prior_cov::Union{Diagonal,Matrix,Nothing}=nothing,
+    init_prior_cov::Union{Diagonal,Matrix,Nothing}=nothing,
+    perturbation_wavenumber::Float64=4.0,
+    perturbation_amplitude::Float64=8.0e-5,
+    filter_type::String="dropout-EAKI",
+    dropout_rate::Float64=0.3,
+    dropout_correction_mode::String="joint",
+    joint_dropout_weight::Float64=1.0,
+    project_initial_ensemble::Bool=true,
+    output_file::String=joinpath(@__DIR__, "Figs", "InflatedEKI_Barotropic.jls"),
+    save_plots::Bool=true,
+    plot_prefix::Union{String,Nothing}=nothing,
+    inflation::Bool=true,
+)
+    problem = inflated_eki_problem_data(;
+        num_fourier, nlat, model_dt, end_time, n_obs_frames, nobs, trunc_N,
+        perturbation_wavenumber, perturbation_amplitude, obs_seed,
+        noise_level, noise_seed,
+    )
+    options = (;
+        init_trunc_N, n_iter, n_ens, inflation_dt, ensemble_seed, initial_tau0,
+        prior_mean, prior_cov, init_prior_cov, filter_type, dropout_rate,
+        dropout_correction_mode, joint_dropout_weight, project_initial_ensemble,
+        output_file, save_plots, plot_prefix, inflation,
+    )
+    return run_inflated_eki_case(problem, options)
+end
+
+function inflated_eki_comparison_initial_ensembles(
+    prior_mean::AbstractVector{Float64},
+    prior_cov_sqrt::AbstractMatrix{Float64},
+    ensemble_sizes,
+    ensemble_seed::Int,
+)
+    rng = MersenneTwister(ensemble_seed)
+    max_ensemble_size = maximum(ensemble_sizes)
+    master_ensemble = reshape(prior_mean, :, 1) .+
+        prior_cov_sqrt * randn(rng, length(prior_mean), max_ensemble_size)
+
+    return map(ensemble_sizes) do n_ens
+        ensemble = copy(master_ensemble[:, 1:n_ens])
+        ensemble .+= reshape(prior_mean, :, 1) .- mean(ensemble, dims=2)
+        ensemble
+    end
 end
 
 function run_inflated_eki_comparison(;
@@ -365,46 +399,37 @@ function run_inflated_eki_comparison(;
         (id="Nens30_Niter20", label="J=30, Iteration=20", n_ens=30, n_iter=20),
         (id="Nens60_Niter10", label="J=60, Iteration=10", n_ens=60, n_iter=10),
     )
+    problem = inflated_eki_problem_data(;
+        num_fourier, nlat, model_dt, end_time, n_obs_frames, nobs, trunc_N,
+        perturbation_wavenumber, perturbation_amplitude, obs_seed,
+        noise_level, noise_seed,
+    )
+    _, covariance_sqrt = inflated_eki_prior_covariance_factor(n_param, covariance)
+    initial_ensembles = inflated_eki_comparison_initial_ensembles(
+        prior_mean,
+        covariance_sqrt,
+        [specification.n_ens for specification in specifications],
+        ensemble_seed,
+    )
+    common_options = (;
+        init_trunc_N=trunc_N, inflation_dt, ensemble_seed, prior_mean,
+        prior_cov=covariance, init_prior_cov=covariance, filter_type, dropout_rate,
+        dropout_correction_mode, joint_dropout_weight, project_initial_ensemble,
+        save_plots=false, plot_prefix=nothing, inflation,
+    )
 
     output_stem = splitext(output_file)[1]
     cases = NamedTuple[]
-    for specification in specifications
+    for (case_index, specification) in enumerate(specifications)
         case_output_file = output_stem * "_" * specification.id * ".jls"
-        case_result = run_inflated_eki(
-            num_fourier=num_fourier,
-            nlat=nlat,
-            model_dt=model_dt,
-            end_time=end_time,
-            n_obs_frames=n_obs_frames,
-            nobs=nobs,
-            trunc_N=trunc_N,
-            init_trunc_N=trunc_N,
+        case_options = merge(common_options, (;
             n_iter=specification.n_iter,
             n_ens=specification.n_ens,
-            inflation_dt=inflation_dt,
-            noise_level=noise_level,
-            noise_seed=noise_seed,
-            obs_seed=obs_seed,
-            ensemble_seed=ensemble_seed,
-            prior_mean=prior_mean,
-            prior_cov=covariance,
-            init_prior_cov=covariance,
-            perturbation_wavenumber=perturbation_wavenumber,
-            perturbation_amplitude=perturbation_amplitude,
-            filter_type=filter_type,
-            dropout_rate=dropout_rate,
-            dropout_correction_mode=dropout_correction_mode,
-            joint_dropout_weight=joint_dropout_weight,
-            project_initial_ensemble=project_initial_ensemble,
+            initial_tau0=initial_ensembles[case_index],
             output_file=case_output_file,
-            save_plots=false,
-            inflation=inflation,
-        )
-        push!(cases, (
-            label=specification.label,
-            specification=specification,
-            result=case_result,
         ))
+        case_result = run_inflated_eki_case(deepcopy(problem), case_options)
+        push!(cases, (; label=specification.label, specification, result=case_result))
     end
 
     @assert cases[1].result.tau_ref == cases[2].result.tau_ref
@@ -414,20 +439,28 @@ function run_inflated_eki_comparison(;
     @assert diag(cases[1].result.init_prior_cov) == diag(covariance)
     @assert diag(cases[2].result.init_prior_cov) == diag(covariance)
 
-    comparison = (
-        cases=cases,
-        specifications=specifications,
-        trunc_N=trunc_N,
+    comparison = (;
+        cases, specifications, trunc_N,
         init_trunc_N=trunc_N,
-        prior_mean=prior_mean,
+        prior_mean,
         prior_cov=covariance,
         init_prior_cov=covariance,
-        output_file=output_file,
+        output_file,
         plot_files=String[],
     )
 
     if save_plots
-        prefix = isnothing(plot_prefix) ? inflated_eki_plot_prefix(output_file, filter_type) : plot_prefix
+        prefix = isnothing(plot_prefix) ?
+            inflated_eki_comparison_plot_prefix(
+                output_file,
+                filter_type;
+                strip_extension=true,
+            ) :
+            inflated_eki_comparison_plot_prefix(
+                plot_prefix,
+                filter_type;
+                strip_extension=false,
+            )
         plot_files = write_inflated_eki_comparison_plots(cases; plot_prefix=prefix)
         comparison = merge(comparison, (plot_files=plot_files,))
     end
