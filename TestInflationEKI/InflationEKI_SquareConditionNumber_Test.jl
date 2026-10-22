@@ -3,7 +3,23 @@ using LinearAlgebra, Random, Statistics, Serialization
 ENV["MPLBACKEND"] = get(ENV, "MPLBACKEND", "Agg")
 using PyPlot
 
-include(joinpath(@__DIR__, "..", "Inversion", "InflationEKI.jl"))
+const PANEL_WIDTH_INCHES = 4.8
+const AXES_TITLE_FONTSIZE = 22
+const AXES_LABEL_FONTSIZE = 20
+const ROW_LABEL_FONTSIZE = 20
+const TICK_LABEL_FONTSIZE = 18
+const LEGEND_FONTSIZE = 19
+
+const MPL_RCPARAMS = PyPlot.PyDict(PyPlot.matplotlib."rcParams")
+MPL_RCPARAMS["font.size"] = 18
+MPL_RCPARAMS["axes.titlesize"] = AXES_TITLE_FONTSIZE
+MPL_RCPARAMS["axes.labelsize"] = AXES_LABEL_FONTSIZE
+MPL_RCPARAMS["xtick.labelsize"] = TICK_LABEL_FONTSIZE
+MPL_RCPARAMS["ytick.labelsize"] = TICK_LABEL_FONTSIZE
+MPL_RCPARAMS["legend.fontsize"] = LEGEND_FONTSIZE
+
+# Fixed-weight implementation of the paper's joint projected-dropout update.
+include(joinpath(@__DIR__, "..", "Inversion", "InflatedEKI.jl"))
 include(joinpath(@__DIR__, "..", "Inversion", "CMAES.jl"))
 
 # ---------------------------------------------------------------- helpers
@@ -115,14 +131,26 @@ struct MethodConf
     label::String
     filter_type::String
     inflation::Bool
+    dropout_correction_mode::String
+    joint_dropout_weight::Float64
 end
 
-function default_method_configs()
+MethodConf(label::String, filter_type::String, inflation::Bool) =
+    MethodConf(label, filter_type, inflation, "joint", 1.0)
+
+MethodConf(label::String, filter_type::String, inflation::Bool,
+           dropout_correction_mode::String) =
+    MethodConf(label, filter_type, inflation, dropout_correction_mode, 1.0)
+
+function default_method_configs(; joint_dropout_weight::Float64=1.0)
+    joint_dropout_weight > 0 ||
+        error("joint_dropout_weight must be positive")
     return MethodConf[
-        MethodConf("DEKI",                  "DEKI",        false),
-        MethodConf("Inflation-EAKI",          "EAKI",        true),
-        MethodConf("Inflation-dropout-EAKI",  "dropout-EAKI", true),
-        MethodConf("CMA-ES",                  "CMAES",       false),
+        MethodConf("DEKI", "DEKI", false),
+        MethodConf("I-EAKI", "EAKI", true),
+        MethodConf("IPD-EAKI", "dropout-EAKI", true,
+                   "joint", joint_dropout_weight),
+        MethodConf("CMA-ES", "CMAES", false),
     ]
 end
 
@@ -153,7 +181,9 @@ function run_eki_method(problem, mc::MethodConf, seed::Int,
                   Δτ=Δτ,
                   N_iter=N_iter,
                   dropout_rate=dropout_rate,
-                  inflation=mc.inflation)
+                  inflation=mc.inflation,
+                  dropout_correction_mode=mc.dropout_correction_mode,
+                  joint_dropout_weight=mc.joint_dropout_weight)
     return misfit_curve(obj.θ, problem.G, problem.y)
 end
 
@@ -199,20 +229,24 @@ function run_square_condition_study(;
         noise_std::Float64=1.0,
         truth_signal::Float64=30.0,
         truth_missing_signal::Float64=30.0,
-        cond_numbers::Vector{Float64}=[1.0, 3.0, 10.0, 30.0, 100.0, 300.0, 1.0e3, 3.0e3, 1.0e4],
-        method_configs::Vector{MethodConf}=default_method_configs(),
+        cond_numbers::Vector{Float64}=[1.0, 10.0, 100.0, 1.0e3, 1.0e4],
+        method_configs::Union{Nothing,Vector{MethodConf}}=nothing,
+        joint_dropout_weight::Float64=1.0,
         seed::Int=2026,
         n_seeds::Int=3,
         cma_sigma0::Float64=1.0,
         initial_offset_scale::Float64=0.0,
         initial_offset_direction::String="qsub_qmissing",
-        save_prefix::String=joinpath(@__DIR__, "Figs", "SquareConditionNumber", "DEKI_EAKI_CMA_SquareConditionNumber"))
+        save_prefix::String=joinpath(@__DIR__, "Figs", "SquareConditionNumber", "DEKI_IEAKI_IPDEAKI_CMA_SquareConditionNumber"))
 
     tag = experiment_tag(; N=N, N_ens=N_ens, N_sub=N_sub, missing_dims=missing_dims,
                           initial_offset_scale=initial_offset_scale,
                           initial_offset_direction=initial_offset_direction,
                           seed=seed, n_seeds=n_seeds, N_iter=N_iter)
     save_prefix = save_prefix * "_" * tag
+    if isnothing(method_configs)
+        method_configs = default_method_configs(; joint_dropout_weight=joint_dropout_weight)
+    end
 
     Random.seed!(seed)
     results = Dict{String, Dict{Int, Dict{Int, Dict{Int, Vector{Float64}}}}}()
@@ -241,12 +275,13 @@ function run_square_condition_study(;
                 )
 
                 for (mi, mc) in enumerate(method_configs)
-                    Random.seed!(seed + 10000 * ki + si + 100000 * mi)
+                    method_seed = seed + 10000 * ki + si + 100000 * mi
+                    Random.seed!(method_seed)
                     @info "Running" N=N cond method=mc.label seed=si N_missing=nmiss iter=N_iter
                     try
                         curve = mc.filter_type == "CMAES" ?
-                            run_cmaes_method(prob, seed, N_iter, cma_sigma0, N_ens, noise_std) :
-                            run_eki_method(prob, mc, seed, Δτ, N_iter, dropout_rate)
+                            run_cmaes_method(prob, method_seed, N_iter, cma_sigma0, N_ens, noise_std) :
+                            run_eki_method(prob, mc, method_seed, Δτ, N_iter, dropout_rate)
                         results[mc.label][ri][ki][si] = curve
                     catch err
                         @warn "Run diverged (numerical error)" cond method=mc.label seed=si err=sprint(showerror, err)[1:min(120, end)]
@@ -266,33 +301,36 @@ function run_square_condition_study(;
                         (maximum(log_conds) - minimum(log_conds) + 1e-12))
                    for lc in log_conds]
 
+    fig_height = 3.6 * length(missing_dims) + 0.9
     fig, ax = PyPlot.subplots(nrows=length(missing_dims), ncols=length(method_configs),
-                              figsize=(4.2 * length(method_configs), 3.6 * length(missing_dims)))
+                              sharex=true, sharey="row", squeeze=false,
+                              figsize=(PANEL_WIDTH_INCHES * length(method_configs), fig_height))
     row_vals = [Float64[] for _ in missing_dims]
 
     for (ri, nmiss) in enumerate(missing_dims)
         for (mi, mc) in enumerate(method_configs)
-            panel = length(missing_dims) == 1 ? (length(method_configs) == 1 ? ax : ax[mi]) : ax[ri, mi]
+            panel = ax[ri, mi]
             panel.yaxis.set_minor_formatter(PyPlot.matplotlib.ticker.NullFormatter())
             panel.yaxis.set_minor_locator(PyPlot.matplotlib.ticker.NullLocator())
+            panel.yaxis.set_major_locator(PyPlot.matplotlib.ticker.LogLocator(base=10.0, numticks=6))
+            panel.tick_params(axis="both", which="major", labelsize=TICK_LABEL_FONTSIZE)
             for (ki, cond) in enumerate(cond_numbers)
                 curves = [results[mc.label][ri][ki][si] for si in 1:n_seeds]
                 med = median_curve(curves, N_iter + 1)
                 append!(row_vals[ri], med[isfinite.(med)])
-                panel.semilogy(ites, med, color=cond_colors[ki], linewidth=1.8, label="κ=$(cond)")
+                condition_label = isinteger(cond) ? string(Int(cond)) : string(cond)
+                if cond >= 100 && isapprox(log10(cond), round(log10(cond)))
+                    condition_label = "10^{$(round(Int, log10(cond)))}"
+                end
+                panel.semilogy(ites, med, color=cond_colors[ki], linewidth=2.2,
+                               label="\$\\kappa=$(condition_label)\$")
             end
-            panel.set_xlabel("Iterations")
             if mi == 1
-                panel.set_ylabel("N_missing = $nmiss\nRelative data misfit")
-            else
-                panel.set_ylabel("Relative data misfit")
+                panel.set_ylabel("\$N_{\\mathrm{missing}} = $(nmiss)\$", fontsize=ROW_LABEL_FONTSIZE)
             end
-            panel.grid(true, which="both", alpha=0.3)
+            panel.grid(true, which="both", alpha=0.18)
             if ri == 1
-                panel.set_title(mc.label, fontsize=11)
-            end
-            if ri == length(missing_dims)
-                panel.legend(loc="best", fontsize=7, ncol=2)
+                panel.set_title(mc.label, fontsize=AXES_TITLE_FONTSIZE, pad=10)
             end
         end
     end
@@ -311,17 +349,21 @@ function run_square_condition_study(;
         end
         ylo = ymin / 3.0
         yhi = ymax * 3.0
-        for (mi, mc) in enumerate(method_configs)
-            panel = length(missing_dims) == 1 ? (length(method_configs) == 1 ? ax : ax[mi]) : ax[ri, mi]
-            panel.set_ylim(ylo, yhi)
-        end
+        ax[ri, 1].set_ylim(ylo, yhi)
     end
 
-    fig.suptitle("Square full-rank G: convergence of relative data misfit", fontsize=13)
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    ax[1, 1].xaxis.set_major_locator(PyPlot.matplotlib.ticker.MaxNLocator(nbins=5, integer=true))
+    handles, labels = ax[1, 1].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.54, 0.995),
+               ncol=min(length(cond_numbers), 5), fontsize=LEGEND_FONTSIZE, frameon=false)
+    fig.text(0.54, 0.02, "Iterations", ha="center", fontsize=AXES_LABEL_FONTSIZE)
+    fig.text(0.012, 0.5, "Relative data misfit", va="center", rotation="vertical",
+             fontsize=AXES_LABEL_FONTSIZE)
+    fig.subplots_adjust(left=0.085, right=0.995, bottom=0.085,
+                        top=1.0 - 1.1 / fig_height, wspace=0.12, hspace=0.14)
     figdir = dirname(save_prefix)
     isempty(figdir) || mkpath(figdir)
-    fig.savefig(save_prefix * "_convergence.png", dpi=160)
+    fig.savefig(save_prefix * "_convergence.png", dpi=200)
     PyPlot.close(fig)
 
     serialize(save_prefix * "_results.jls", (; N, N_ens, N_sub, missing_dims, N_iter,
@@ -359,21 +401,21 @@ if abspath(PROGRAM_FILE) == @__FILE__
         N=env_parse("N", 100),
         N_ens=env_parse("N_ENS", 21),
         N_sub=env_parse("N_SUB", 20),
-        missing_dims=env_int_list("N_MISSING_VALUES", [0, 2, 10, 20]),
-        N_iter=env_parse("N_ITER", 500),
-        Δτ=env_parse("DELTA_T", 0.2),
+        missing_dims=env_int_list("N_MISSING_VALUES", [0, 2, 10]),
+        N_iter=env_parse("N_ITER", 100),
+        Δτ=env_parse("DELTA_T", 0.5),
         dropout_rate=env_parse("DROPOUT_RATE", 0.5),
         noise_std=env_parse("NOISE_STD", 1.0),
         truth_signal=env_parse("TRUTH_SIGNAL", 30.0),
         truth_missing_signal=env_parse("TRUTH_MISSING_SIGNAL", 30.0),
-        cond_numbers=env_cond_numbers([1.0, 3.0, 10.0, 30.0, 100.0, 300.0, 1.0e3, 3.0e3, 1.0e4]),
+        cond_numbers=env_cond_numbers([1.0, 10.0, 100.0, 1.0e3, 1.0e4]),
         seed=env_parse("SEED", 2026),
-        n_seeds=env_parse("N_SEEDS", 1),
+        n_seeds=env_parse("N_SEEDS", 3),
+        joint_dropout_weight=env_parse("JOINT_DROPOUT_WEIGHT", 1.0),
         cma_sigma0=env_parse("CMA_SIGMA0", 1.0),
         initial_offset_scale=env_parse("INITIAL_OFFSET_SCALE", 0.0),
         initial_offset_direction=get(ENV, "INITIAL_OFFSET_DIRECTION", "qsub_qmissing"),
         save_prefix=get(ENV, "SAVE_PREFIX",
-                        joinpath(@__DIR__, "Figs", "SquareConditionNumber", "DEKI_EAKI_CMA_SquareConditionNumber")),
+                        joinpath(@__DIR__, "Figs", "SquareConditionNumber", "DEKI_IEAKI_IPDEAKI_CMA_SquareConditionNumber")),
     )
 end
-
