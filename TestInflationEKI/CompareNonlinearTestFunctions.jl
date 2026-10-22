@@ -105,12 +105,14 @@ problem_seed(base_seed::Int, name::String) =
 
 function plot_window(args::NamedTuple)
     if args.name == "rastrigin"
-        return ((-5.12, 5.12), (-5.12, 5.12))
+        return ((-3.0, 3.0), (-3.0, 3.0))
     elseif args.name == "rotated_rastrigin"
         return ((-5.12, 5.12), (-5.12, 5.12))
     elseif args.name in ("rosenbrock", "paired_rosenbrock")
         return ((-2.0, 2.0), (-1.0, 3.0))
-    elseif args.name in ("weakly_nonlinear", "monotone_cubic")
+    elseif args.name == "monotone_cubic"
+        return ((-4.0, 0.0), (-2.5, 1.5))
+    elseif args.name == "weakly_nonlinear"
         radius = 3.0
         return (
             (args.ref_theta[1] - radius, args.ref_theta[1] + radius),
@@ -120,7 +122,7 @@ function plot_window(args::NamedTuple)
     error("Unknown nonlinear test function: $(args.name)")
 end
 
-function normalized_density_heatmap(args, theta_dim::Int, n_grid::Int)
+function objective_slice_heatmap(args, theta_dim::Int, n_grid::Int)
     xlim, ylim = plot_window(args)
     xs = collect(range(xlim[1], xlim[2], length=n_grid))
     ys = collect(range(ylim[1], ylim[2], length=n_grid))
@@ -136,8 +138,9 @@ function normalized_density_heatmap(args, theta_dim::Int, n_grid::Int)
     end
 
     shifted = potential .- minimum(potential)
-    weights = exp.(-shifted)
-    heatmap = weights ./ sum(weights)
+    positive_values = shifted[shifted .> 0]
+    scale = isempty(positive_values) ? 1.0 : quantile(positive_values, 0.1)
+    heatmap = log10.(1 .+ shifted ./ scale)
     return (; xs, ys, x_grid, y_grid, heatmap)
 end
 
@@ -150,12 +153,6 @@ function initial_ensemble(args::NamedTuple, cfg::NonlinearComparisonConfig, rng:
         theta_center = repeat([-1.2, 1.0], div(cfg.theta_dim, 2))
         return theta_center .+
                cfg.paired_rosenbrock_initial_std .* randn(rng, cfg.theta_dim, cfg.n_ens)
-    elseif args.name == "rosenbrock"
-        # The same classical alternating start is now coupled through every
-        # adjacent pair by the chained Rosenbrock forward map.
-        theta_center = [isodd(i) ? -1.2 : 1.0 for i in 1:cfg.theta_dim]
-        return theta_center .+
-               cfg.rosenbrock_initial_std .* randn(rng, cfg.theta_dim, cfg.n_ens)
     end
     return cfg.initial_std .* randn(rng, cfg.theta_dim, cfg.n_ens)
 end
@@ -168,7 +165,7 @@ function make_nonlinear_problem(name::String, cfg::NonlinearComparisonConfig, se
 
     rng = MersenneTwister(seed + 17)
     theta0 = initial_ensemble(args, cfg, rng)
-    grid = normalized_density_heatmap(args, cfg.theta_dim, cfg.n_grid)
+    grid = objective_slice_heatmap(args, cfg.theta_dim, cfg.n_grid)
 
     return NonlinearComparisonProblem(
         args.name,
@@ -488,21 +485,29 @@ function plot_style(index::Int)
     )
 end
 
-function plot_heatmap_and_final_points!(ax, problem::NonlinearComparisonProblem, runs)
-    ax.pcolormesh(problem.x_grid, problem.y_grid, problem.heatmap, cmap="viridis")
-    ax.contour(problem.x_grid, problem.y_grid, problem.heatmap, 12; colors="white",
-        linewidths=0.6, alpha=0.55)
+function plot_heatmap_and_final_points!(ax, problem::NonlinearComparisonProblem, runs;
+                                        point_size=18, point_alpha=0.55,
+                                        point_edgecolor=nothing,
+                                        point_linewidth=0.4,
+                                        rasterize_heatmap=false)
+    ax.pcolormesh(problem.x_grid, problem.y_grid, problem.heatmap;
+        cmap="viridis_r", rasterized=rasterize_heatmap)
+    if maximum(problem.heatmap) > minimum(problem.heatmap)
+        ax.contour(problem.x_grid, problem.y_grid, problem.heatmap, 8;
+            colors="white", linewidths=0.5, alpha=0.45)
+    end
     ax.scatter(problem.reference_mean[1], problem.reference_mean[2];
         marker="*", s=120, color="black", label="reference minimizer", zorder=5)
     for (index, run) in enumerate(runs)
         style = plot_style(index)
         points = run.final_points
-        ax.scatter(points[1, :], points[2, :]; s=18, alpha=0.55,
-            color=style.color, marker=style.marker, linewidths=0.4,
+        ax.scatter(points[1, :], points[2, :]; s=point_size, alpha=point_alpha,
+            color=style.color, marker=style.marker,
+            edgecolors=point_edgecolor, linewidths=point_linewidth,
             label=run.label, zorder=3)
     end
 
-    ax.set_title("$(problem.name): density slice")
+    ax.set_title("$(problem.name): objective slice")
     ax.set_xlabel("theta_1")
     ax.set_ylabel("theta_2")
     ax.set_xlim(extrema(problem.xs))
