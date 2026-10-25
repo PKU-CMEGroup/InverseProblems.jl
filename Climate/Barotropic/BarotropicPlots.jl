@@ -1,6 +1,8 @@
 using LinearAlgebra
 using Statistics
 using PyPlot
+isdefined(@__MODULE__, :PublicationPlotStyle) ||
+    include(joinpath(@__DIR__, "..", "..", "Inversion", "Plot.jl"))
 
 function barotropic_default_plot_prefix(output_file::String)
     return splitext(output_file)[1]
@@ -13,6 +15,8 @@ function barotropic_meshgrid(mesh::Spectral_Spherical_Mesh)
 end
 
 function barotropic_save_plot(fig, save_file::String)
+    save_file = splitext(save_file)[1] * ".pdf"
+    PublicationPlotStyle.apply!(fig)
     fig.tight_layout()
     mkpath(dirname(save_file))
     fig.savefig(save_file, dpi=180)
@@ -286,18 +290,18 @@ function write_inflated_eki_plots(result; method_label::String, plot_prefix::Str
     )
     push!(plot_files, barotropic_plot_optimization_error(
         result.optimization_errors,
-        plot_prefix * "_opt_errors.png";
+        plot_prefix * "_opt_errors.pdf";
         method_label=method_label,
     ))
     push!(plot_files, barotropic_plot_covariance_norm(
         result.covariance_norms,
-        plot_prefix * "_cov_norm.png";
+        plot_prefix * "_cov_norm.pdf";
         method_label=method_label,
     ))
     push!(plot_files, inflated_eki_plot_vorticity_std(
         result.sparam,
         result.inflated_ekiobj.θ[end],
-        plot_prefix * "_vorticity_std.png",
+        plot_prefix * "_vorticity_std.pdf",
     ))
     return plot_files
 end
@@ -376,18 +380,18 @@ function barotropic_write_standard_plots(
     observation_truth=result.tau_ref,
 )
     plot_files = String[]
-    push!(plot_files, barotropic_plot_initial_condition(result.sparam, plot_prefix * "_initial_condition.png"))
+    push!(plot_files, barotropic_plot_initial_condition(result.sparam, plot_prefix * "_initial_condition.pdf"))
     push!(plot_files, barotropic_plot_observation_frames(
         result.sparam,
         observation_truth,
-        plot_prefix * "_zonal_velocity_observations.png";
+        plot_prefix * "_zonal_velocity_observations.pdf";
         forward=observation_forward,
     ))
-    push!(plot_files, barotropic_plot_recovered_vorticity(result.sparam, [(method_label, result.grid_vor_est)], plot_prefix * "_recovered_vorticity.png"))
+    push!(plot_files, barotropic_plot_recovered_vorticity(result.sparam, [(method_label, result.grid_vor_est)], plot_prefix * "_recovered_vorticity.pdf"))
     push!(plot_files, barotropic_plot_convergence(
         result.vorticity_errors,
         result.observation_errors,
-        plot_prefix * "_convergence.png";
+        plot_prefix * "_convergence.pdf";
         method_label=method_label,
     ))
     return plot_files
@@ -398,28 +402,28 @@ function write_inflated_eki_comparison_plots(cases; plot_prefix::String)
     plot_files = String[]
     push!(plot_files, barotropic_plot_initial_condition(
         reference.sparam,
-        plot_prefix * "_initial_condition.png",
+        plot_prefix * "_initial_condition.pdf",
     ))
     push!(plot_files, barotropic_plot_observation_frames(
         reference.sparam,
         reference.tau_ref,
-        plot_prefix * "_zonal_velocity_observations.png",
+        plot_prefix * "_zonal_velocity_observations.pdf",
     ))
     push!(plot_files, barotropic_plot_recovered_vorticity_comparison(
         cases,
-        plot_prefix * "_recovered_vorticity.png",
+        plot_prefix * "_recovered_vorticity.pdf",
     ))
     push!(plot_files, barotropic_plot_convergence_comparison(
         cases,
-        plot_prefix * "_convergence.png",
+        plot_prefix * "_convergence.pdf",
     ))
     push!(plot_files, barotropic_plot_covariance_norm_comparison(
         cases,
-        plot_prefix * "_cov_norm.png",
+        plot_prefix * "_cov_norm.pdf",
     ))
     push!(plot_files, inflated_eki_plot_vorticity_std_comparison(
         cases,
-        plot_prefix * "_vorticity_std.png",
+        plot_prefix * "_vorticity_std.pdf",
     ))
     return plot_files
 end

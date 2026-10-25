@@ -2,16 +2,18 @@ using LinearAlgebra, Random, Statistics, Serialization
 
 ENV["MPLBACKEND"] = get(ENV, "MPLBACKEND", "Agg")
 using PyPlot
+isdefined(@__MODULE__, :PublicationPlotStyle) ||
+    include(joinpath(@__DIR__, "..", "Inversion", "Plot.jl"))
 
 const PANEL_WIDTH_INCHES = 4.8
-const AXES_TITLE_FONTSIZE = 22
-const AXES_LABEL_FONTSIZE = 20
-const ROW_LABEL_FONTSIZE = 20
-const TICK_LABEL_FONTSIZE = 18
-const LEGEND_FONTSIZE = 19
+const AXES_TITLE_FONTSIZE = PublicationPlotStyle.TITLE_SIZE
+const AXES_LABEL_FONTSIZE = PublicationPlotStyle.LABEL_SIZE
+const ROW_LABEL_FONTSIZE = PublicationPlotStyle.LABEL_SIZE
+const TICK_LABEL_FONTSIZE = PublicationPlotStyle.TICK_SIZE
+const LEGEND_FONTSIZE = PublicationPlotStyle.LEGEND_SIZE
 
 const MPL_RCPARAMS = PyPlot.PyDict(PyPlot.matplotlib."rcParams")
-MPL_RCPARAMS["font.size"] = 18
+MPL_RCPARAMS["font.size"] = TICK_LABEL_FONTSIZE
 MPL_RCPARAMS["axes.titlesize"] = AXES_TITLE_FONTSIZE
 MPL_RCPARAMS["axes.labelsize"] = AXES_LABEL_FONTSIZE
 MPL_RCPARAMS["xtick.labelsize"] = TICK_LABEL_FONTSIZE
@@ -237,7 +239,7 @@ function run_square_condition_study(;
         cma_sigma0::Float64=1.0,
         initial_offset_scale::Float64=0.0,
         initial_offset_direction::String="qsub_qmissing",
-        save_prefix::String=joinpath(@__DIR__, "Figs", "SquareConditionNumber", "DEKI_IEAKI_IPDEAKI_CMA_SquareConditionNumber"))
+        save_prefix::String=joinpath(@__DIR__, "Results", "Linear", "DEKI_IEAKI_IPDEAKI_CMA_SquareConditionNumber"))
 
     tag = experiment_tag(; N=N, N_ens=N_ens, N_sub=N_sub, missing_dims=missing_dims,
                           initial_offset_scale=initial_offset_scale,
@@ -363,7 +365,8 @@ function run_square_condition_study(;
                         top=1.0 - 1.1 / fig_height, wspace=0.12, hspace=0.14)
     figdir = dirname(save_prefix)
     isempty(figdir) || mkpath(figdir)
-    fig.savefig(save_prefix * "_convergence.png", dpi=200)
+    PublicationPlotStyle.apply!(fig)
+    fig.savefig(save_prefix * "_convergence.pdf", dpi=200)
     PyPlot.close(fig)
 
     serialize(save_prefix * "_results.jls", (; N, N_ens, N_sub, missing_dims, N_iter,

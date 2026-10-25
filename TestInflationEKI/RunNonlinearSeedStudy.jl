@@ -3,6 +3,8 @@ using Serialization
 using Statistics
 
 include(joinpath(@__DIR__, "CompareNonlinearTestFunctions.jl"))
+isdefined(@__MODULE__, :PublicationPlotStyle) ||
+    include(joinpath(@__DIR__, "..", "Inversion", "Plot.jl"))
 
 env_int(name, default) = parse(Int, get(ENV, name, string(default)))
 env_float(name, default) = parse(Float64, get(ENV, name, string(default)))
@@ -63,10 +65,11 @@ function make_seed_trajectory_figure(function_names, trajectories, snapshots,
                 snapshot.runs; point_size=40, point_alpha=0.9,
                 point_edgecolor="black", point_linewidth=0.5,
                 rasterize_heatmap=true)
-            heatmap_ax.set_title("Objective slice (J=$(n_ens))"; fontsize=14)
+            heatmap_ax.set_title("Objective slice (J=$(n_ens))";
+                fontsize=PublicationPlotStyle.TITLE_SIZE)
             heatmap_ax.set_xlabel("")
             heatmap_ax.set_ylabel("")
-            heatmap_ax.tick_params(axis="both", labelsize=11)
+            heatmap_ax.tick_params(axis="both", labelsize=PublicationPlotStyle.TICK_SIZE)
             legend = heatmap_ax.get_legend()
             legend !== nothing && legend.remove()
 
@@ -84,18 +87,24 @@ function make_seed_trajectory_figure(function_names, trajectories, snapshots,
                         color=style.color,
                         linestyle=ensemble_linestyles[mod1(block_index,
                             length(ensemble_linestyles))],
-                        linewidth=1.7, label="$(method) (J=$(n_ens))")
+                        linewidth=1.7, marker=style.marker, markersize=5,
+                        fillstyle="none", markevery=max(1, div(length(grid), 10)),
+                        label="$(method) (J=$(n_ens))")
                     ax.fill_between(grid, positive_for_log(lower), positive_for_log(upper);
                         color=style.color, alpha=0.1, linewidth=0)
                 end
             end
         end
-        axs[row_index, n_heatmaps + 1].set_title("Best evaluated objective"; fontsize=14)
-        axs[row_index, n_heatmaps + 2].set_title("Covariance norm"; fontsize=14)
+        axs[row_index, n_heatmaps + 1].set_title("Best evaluated objective";
+            fontsize=PublicationPlotStyle.TITLE_SIZE)
+        axs[row_index, n_heatmaps + 2].set_title("Covariance norm";
+            fontsize=PublicationPlotStyle.TITLE_SIZE)
         for column in (n_heatmaps + 1):(n_heatmaps + 2)
-            axs[row_index, column].set_xlabel("forward model evaluations"; fontsize=12)
+            axs[row_index, column].set_xlabel("forward model evaluations";
+                fontsize=PublicationPlotStyle.LABEL_SIZE)
             axs[row_index, column].set_ylabel("")
-            axs[row_index, column].tick_params(axis="both", labelsize=11)
+            axs[row_index, column].tick_params(axis="both",
+                labelsize=PublicationPlotStyle.TICK_SIZE)
             axs[row_index, column].grid(true, alpha=0.25)
         end
     end
@@ -104,7 +113,9 @@ function make_seed_trajectory_figure(function_names, trajectories, snapshots,
     pushfirst!(handles, reference_handles[1])
     pushfirst!(labels, "reference minimizer")
     fig.legend(handles, labels; loc="upper center", ncol=length(labels),
-        fontsize=13, frameon=false, bbox_to_anchor=(0.5, 0.995))
+        fontsize=PublicationPlotStyle.LEGEND_SIZE, frameon=false,
+        bbox_to_anchor=(0.5, 0.995))
+    PublicationPlotStyle.apply!(fig)
     fig.tight_layout(rect=(0, 0, 1, 1 - 0.8 / fig_height), w_pad=1.5)
     return fig, axs
 end
@@ -130,7 +141,7 @@ function run_nonlinear_seed_study(;
         seed::Int=2026091500,
         inflation_dt::Float64=0.5,
         dropout_rate::Float64=0.5,
-        output_dir::String=joinpath(@__DIR__, "Results"),
+        output_dir::String=joinpath(@__DIR__, "Results","Nonlinear100D"),
         save_plots::Bool=false,
         save_summary_plot::Bool=true,
         verbose::Bool=false)

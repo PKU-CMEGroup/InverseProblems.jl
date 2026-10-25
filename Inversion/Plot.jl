@@ -1,4 +1,40 @@
 using PyPlot
+if !isdefined(@__MODULE__, :PublicationPlotStyle)
+    @eval module PublicationPlotStyle
+
+    const TITLE_SIZE = 16
+    const LABEL_SIZE = 14
+    const TICK_SIZE = 13
+    const LEGEND_SIZE = 14
+
+    """Apply the common paper-figure typography, including colorbars and legends."""
+    function apply!(fig)
+        for ax in fig.axes
+            ax.title.set_fontsize(TITLE_SIZE)
+            ax.xaxis.label.set_fontsize(LABEL_SIZE)
+            ax.yaxis.label.set_fontsize(LABEL_SIZE)
+            ax.tick_params(axis="both", which="both", labelsize=TICK_SIZE)
+            ax.xaxis.get_offset_text().set_fontsize(TICK_SIZE)
+            ax.yaxis.get_offset_text().set_fontsize(TICK_SIZE)
+            legend = ax.get_legend()
+            if legend !== nothing
+                for label in legend.get_texts()
+                    label.set_fontsize(LEGEND_SIZE)
+                end
+            end
+        end
+        for legend in fig.legends, label in legend.get_texts()
+            label.set_fontsize(LEGEND_SIZE)
+        end
+        for label in fig.texts
+            label.set_fontsize(LABEL_SIZE)
+        end
+        return fig
+    end
+
+    end
+end
+
 rcParams = PyPlot.PyDict(PyPlot.matplotlib."rcParams")
     mysize = 15
     font0 = Dict(
