@@ -201,13 +201,18 @@ function run_cmaes_method(problem, seed::Int, N_iter::Int,
     return [norm(problem.G * p - problem.y) / max(norm(problem.y), eps(Float64)) for p in traj]
 end
 
-function median_curve(curves::Vector{Vector{Float64}}, n::Int)
-    med = fill(NaN, n)
+function median_iqr_curves(curves::Vector{Vector{Float64}}, n::Int)
+    centers = fill(NaN, n)
+    lower = fill(NaN, n)
+    upper = fill(NaN, n)
     for i in 1:n
         vals = Float64[c[i] for c in curves if i <= length(c) && isfinite(c[i])]
-        med[i] = isempty(vals) ? NaN : median(vals)
+        isempty(vals) && continue
+        centers[i] = median(vals)
+        lower[i] = quantile(vals, 0.25)
+        upper[i] = quantile(vals, 0.75)
     end
-    return med
+    return centers, lower, upper
 end
 
 function experiment_tag(; N, N_ens, N_sub, missing_dims, initial_offset_scale,
@@ -235,7 +240,7 @@ function run_square_condition_study(;
         method_configs::Union{Nothing,Vector{MethodConf}}=nothing,
         joint_dropout_weight::Float64=1.0,
         seed::Int=2026,
-        n_seeds::Int=3,
+        n_seeds::Int=10,
         cma_sigma0::Float64=1.0,
         initial_offset_scale::Float64=0.0,
         initial_offset_direction::String="qsub_qmissing",
@@ -318,13 +323,20 @@ function run_square_condition_study(;
             panel.tick_params(axis="both", which="major", labelsize=TICK_LABEL_FONTSIZE)
             for (ki, cond) in enumerate(cond_numbers)
                 curves = [results[mc.label][ri][ki][si] for si in 1:n_seeds]
-                med = median_curve(curves, N_iter + 1)
-                append!(row_vals[ri], med[isfinite.(med)])
+                center, lower, upper = median_iqr_curves(curves, N_iter + 1)
+                for values in (center, lower, upper)
+                    append!(row_vals[ri], values[isfinite.(values) .& (values .> 0)])
+                end
                 condition_label = isinteger(cond) ? string(Int(cond)) : string(cond)
                 if cond >= 100 && isapprox(log10(cond), round(log10(cond)))
                     condition_label = "10^{$(round(Int, log10(cond)))}"
                 end
-                panel.semilogy(ites, med, color=cond_colors[ki], linewidth=2.2,
+                # Quantiles use the original values; clip zero only for logarithmic display.
+                panel.fill_between(ites, max.(lower, floatmin(Float64)), max.(upper, floatmin(Float64)),
+                                   color=cond_colors[ki], alpha=0.1, linewidth=0,
+                                   label="_nolegend_", zorder=1)
+                panel.semilogy(ites, max.(center, floatmin(Float64)), color=cond_colors[ki], linewidth=2.2,
+                               linestyle="-", zorder=3,
                                label="\$\\kappa=$(condition_label)\$")
             end
             if mi == 1
@@ -413,7 +425,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
         truth_missing_signal=env_parse("TRUTH_MISSING_SIGNAL", 30.0),
         cond_numbers=env_cond_numbers([1.0, 10.0, 100.0, 1.0e3, 1.0e4]),
         seed=env_parse("SEED", 2026),
-        n_seeds=env_parse("N_SEEDS", 3),
+        n_seeds=env_parse("N_SEEDS", 10),
         joint_dropout_weight=env_parse("JOINT_DROPOUT_WEIGHT", 1.0),
         cma_sigma0=env_parse("CMA_SIGMA0", 1.0),
         initial_offset_scale=env_parse("INITIAL_OFFSET_SCALE", 0.0),
