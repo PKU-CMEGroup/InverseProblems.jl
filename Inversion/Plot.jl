@@ -8,26 +8,27 @@ if !isdefined(@__MODULE__, :PublicationPlotStyle)
     const LEGEND_SIZE = 14
 
     """Apply the common paper-figure typography, including colorbars and legends."""
-    function apply!(fig)
+    function apply!(fig; title_size=TITLE_SIZE, label_size=LABEL_SIZE,
+                    tick_size=TICK_SIZE, legend_size=LEGEND_SIZE)
         for ax in fig.axes
-            ax.title.set_fontsize(TITLE_SIZE)
-            ax.xaxis.label.set_fontsize(LABEL_SIZE)
-            ax.yaxis.label.set_fontsize(LABEL_SIZE)
-            ax.tick_params(axis="both", which="both", labelsize=TICK_SIZE)
-            ax.xaxis.get_offset_text().set_fontsize(TICK_SIZE)
-            ax.yaxis.get_offset_text().set_fontsize(TICK_SIZE)
+            ax.title.set_fontsize(title_size)
+            ax.xaxis.label.set_fontsize(label_size)
+            ax.yaxis.label.set_fontsize(label_size)
+            ax.tick_params(axis="both", which="both", labelsize=tick_size)
+            ax.xaxis.get_offset_text().set_fontsize(tick_size)
+            ax.yaxis.get_offset_text().set_fontsize(tick_size)
             legend = ax.get_legend()
             if legend !== nothing
                 for label in legend.get_texts()
-                    label.set_fontsize(LEGEND_SIZE)
+                    label.set_fontsize(legend_size)
                 end
             end
         end
         for legend in fig.legends, label in legend.get_texts()
-            label.set_fontsize(LEGEND_SIZE)
+            label.set_fontsize(legend_size)
         end
         for label in fig.texts
-            label.set_fontsize(LABEL_SIZE)
+            label.set_fontsize(label_size)
         end
         return fig
     end

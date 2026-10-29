@@ -6,11 +6,11 @@ isdefined(@__MODULE__, :PublicationPlotStyle) ||
     include(joinpath(@__DIR__, "..", "Inversion", "Plot.jl"))
 
 const PANEL_WIDTH_INCHES = 4.8
-const AXES_TITLE_FONTSIZE = PublicationPlotStyle.TITLE_SIZE
-const AXES_LABEL_FONTSIZE = PublicationPlotStyle.LABEL_SIZE
-const ROW_LABEL_FONTSIZE = PublicationPlotStyle.LABEL_SIZE
-const TICK_LABEL_FONTSIZE = PublicationPlotStyle.TICK_SIZE
-const LEGEND_FONTSIZE = PublicationPlotStyle.LEGEND_SIZE
+const AXES_TITLE_FONTSIZE = 20
+const AXES_LABEL_FONTSIZE = 18
+const ROW_LABEL_FONTSIZE = 18
+const TICK_LABEL_FONTSIZE = 14
+const LEGEND_FONTSIZE = 18
 
 const MPL_RCPARAMS = PyPlot.PyDict(PyPlot.matplotlib."rcParams")
 MPL_RCPARAMS["font.size"] = TICK_LABEL_FONTSIZE
@@ -377,7 +377,9 @@ function run_square_condition_study(;
                         top=1.0 - 1.1 / fig_height, wspace=0.12, hspace=0.14)
     figdir = dirname(save_prefix)
     isempty(figdir) || mkpath(figdir)
-    PublicationPlotStyle.apply!(fig)
+    PublicationPlotStyle.apply!(fig; title_size=AXES_TITLE_FONTSIZE,
+        label_size=AXES_LABEL_FONTSIZE, tick_size=TICK_LABEL_FONTSIZE,
+        legend_size=LEGEND_FONTSIZE)
     fig.savefig(save_prefix * "_convergence.pdf", dpi=200)
     PyPlot.close(fig)
 

@@ -112,11 +112,12 @@ function make_seed_trajectory_figure(function_names, trajectories, snapshots,
     handles, labels = axs[1, n_heatmaps + 1].get_legend_handles_labels()
     pushfirst!(handles, reference_handles[1])
     pushfirst!(labels, "reference minimizer")
-    fig.legend(handles, labels; loc="upper center", ncol=length(labels),
-        fontsize=PublicationPlotStyle.LEGEND_SIZE, frameon=false,
+    fig.legend(handles, labels; loc="upper center", ncol=cld(length(labels), 2),
+        fontsize=18, frameon=false,
         bbox_to_anchor=(0.5, 0.995))
-    PublicationPlotStyle.apply!(fig)
-    fig.tight_layout(rect=(0, 0, 1, 1 - 0.8 / fig_height), w_pad=1.5)
+    PublicationPlotStyle.apply!(fig;
+        title_size=20, label_size=18, tick_size=14, legend_size=18)
+    fig.tight_layout(rect=(0, 0, 1, 1 - 1.25 / fig_height), w_pad=1.5)
     return fig, axs
 end
 
