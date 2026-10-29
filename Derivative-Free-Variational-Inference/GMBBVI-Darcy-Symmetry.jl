@@ -10,6 +10,7 @@ include("../Inversion/AnnealingInitialize.jl")
 include("../Fluid/Darcy-2D.jl")
 
 BLAS.set_num_threads(1)
+@info "Runtime configuration" julia_version=VERSION julia_threads=Threads.nthreads() blas_threads=BLAS.get_num_threads()
 
 #=
 A hardcoding source function, 
@@ -110,6 +111,7 @@ function obs_with_refined_mesh(N, L, N_KL, obs_ΔNx, obs_ΔNy, N_θ, d, τ, σ_0
 
 end 
 
+setup_started = time()
 seed = 111
 N, L = 81, 1.0
 obs_ΔNx, obs_ΔNy = 10, 10
@@ -122,6 +124,7 @@ darcy = Setup_Param(N, L, N_KL, obs_ΔNx, obs_ΔNy, N_θ, d, τ, σ_0; seed = se
 
 y_noiseless = obs_with_refined_mesh(N, L, N_KL, obs_ΔNx, obs_ΔNy, N_θ, d, τ, σ_0, seed; refine_factor = 3)
 @save "Darcy-2D-truth.jld2" darcy y_noiseless
+@info "Darcy setup completed" seconds=time()-setup_started
 
 @info "Darcy Problem with N=", N, "N_KL=", N_KL
 @info "length of y_noiseless: ", length(y_noiseless)
@@ -134,7 +137,7 @@ y_noiseless = obs_with_refined_mesh(N, L, N_KL, obs_ΔNx, obs_ΔNy, N_θ, d, τ,
 
 
 # GMBBVI initialization
-N_iter = 500
+N_iter = 50
 N_y = length(y_noiseless)
 σ_η = 0.25
 Σ_η = σ_η^2 * Array(Diagonal(fill(1.0, N_y)))
@@ -168,11 +171,13 @@ end
 dt = 0.9
 func_args = (y, μ_0, σ_η, σ_0)
 func_F(x) = darcy_F(darcy, func_args, x)
-func_Phi(x) = 0.5 * norm(darcy_F(darcy, func_args, x))^2
+func_Phi = let problem = darcy, args = func_args
+    x -> 0.5 * norm(darcy_F(problem, args, x))^2
+end
 N_ens = 4*N_θ
 
 
-gmgdobj = Gaussian_mixture_GMBBVI(
+gmbbvi_timing = @timed Gaussian_mixture_GMBBVI(
         func_Phi,
         θ0_w, θ0_mean, θθ0_cov;
         N_iter = N_iter,
@@ -181,12 +186,15 @@ gmgdobj = Gaussian_mixture_GMBBVI(
         scheduler_type = "stable_cos_decay",
         quadrature_type = "random_sampling"
        ) 
+gmgdobj = gmbbvi_timing.value
+@info "GMBBVI timing" seconds=gmbbvi_timing.time gc_seconds=gmbbvi_timing.gctime allocated_GiB=gmbbvi_timing.bytes/2.0^30
 @save "gmgdobj-Darcy.jld2" gmgdobj
 
 
 # gmgdobj = load("gmgdobj-Darcy.jld2")["gmgdobj"]
 
 
+postprocessing_started = time()
 fig, (ax1, ax2, ax3, ax4) = PyPlot.subplots(ncols=4, figsize=(20,5))
 ites = Array(LinRange(0, N_iter-1, N_iter))
 errors = zeros(Float64, (3, N_iter, N_modes))
@@ -328,4 +336,4 @@ ax_logk[4].set_title("Mean of modes close to mirror")
 
 fig_logk.tight_layout()
 fig_logk.savefig("Darcy-2D-logk.pdf")
-
+@info "Darcy postprocessing completed" seconds=time()-postprocessing_started
