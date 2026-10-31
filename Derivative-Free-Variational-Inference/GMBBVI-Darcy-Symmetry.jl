@@ -137,7 +137,7 @@ y_noiseless = obs_with_refined_mesh(N, L, N_KL, obs_ΔNx, obs_ΔNy, N_θ, d, τ,
 
 
 # GMBBVI initialization
-N_iter = 50
+N_iter = 500
 N_y = length(y_noiseless)
 σ_η = 0.25
 Σ_η = σ_η^2 * Array(Diagonal(fill(1.0, N_y)))
@@ -234,9 +234,9 @@ linestyles = ["o"; "x"; "s"; "*"; "^"; "v"; "<"; ">"]
 markevery = 20
 for m = 1: N_modes
     if mark_truth[m] == true
-        label = "Mode "*string(m)*" (truth)"
+        label = "Component "*string(m)*" (truth)"
     else
-        label = "Mode "*string(m)*" (mirrored)"
+        label = "Component "*string(m)*" (mirrored)"
     end
     ax1.plot(ites, errors[1, :, m], marker=linestyles[m], color = "C"*string(m), fillstyle="none", markevery=markevery, label= label)
 end
@@ -245,14 +245,14 @@ ax1.set_ylabel("Rel. error of log a(x)")
 ax1.legend()
 
 for m = 1: N_modes
-    ax2.semilogy(ites, errors[2, :, m], marker=linestyles[m], color = "C"*string(m), fillstyle="none", markevery=markevery, label= "Mode "*string(m))
+    ax2.semilogy(ites, errors[2, :, m], marker=linestyles[m], color = "C"*string(m), fillstyle="none", markevery=markevery, label= "Component "*string(m))
 end
 ax2.set_xlabel("Iterations")
 ax2.set_ylabel(L"\Phi_R")
 ax2.legend()
 
 for m = 1: N_modes
-    ax3.plot(ites, errors[3, :, m], marker=linestyles[m], color = "C"*string(m), fillstyle="none", markevery=markevery, label= "Mode "*string(m))
+    ax3.plot(ites, errors[3, :, m], marker=linestyles[m], color = "C"*string(m), fillstyle="none", markevery=markevery, label= "Component "*string(m))
 end
 ax3.set_xlabel("Iterations")
 ax3.set_ylabel("Frobenius norm of covariance")
@@ -261,7 +261,7 @@ ax3.legend()
 
 x_w = exp.(hcat(gmgdobj.logx_w...))
 for m = 1: N_modes
-    ax4.plot(ites, x_w[m, 1:N_iter], marker=linestyles[m], color = "C"*string(m), fillstyle="none", markevery=markevery, label= "Mode "*string(m))
+    ax4.plot(ites, x_w[m, 1:N_iter], marker=linestyles[m], color = "C"*string(m), fillstyle="none", markevery=markevery, label= "Component "*string(m))
 end
 ax4.set_xlabel("Iterations")
 ax4.set_ylabel("Weights")
@@ -277,7 +277,7 @@ n_ind = 16
 θ_ind = Array(1:n_ind)
 ax.scatter(θ_ind, θ_ref[θ_ind], s = 100, marker="x", color="black", label="Truth")
 for m = 1:N_modes
-    ax.scatter(θ_ind, gmgdobj.x_mean[N_iter][m,θ_ind], s = 50, marker="o", color="C"*string(m), facecolors="none", label="Mode "*string(m))
+    ax.scatter(θ_ind, gmgdobj.x_mean[N_iter][m,θ_ind], s = 50, marker="o", color="C"*string(m), facecolors="none", label="Component "*string(m))
 end
 
 Nx = 1000
@@ -329,9 +329,9 @@ ax_logk[1].set_title("Truth")
 plot_field(darcy, darcy.logκ_2d[end:-1:1, :],  color_lim, ax_logk[2]) 
 ax_logk[2].set_title("Truth (mirrored)")
 plot_field(darcy, compute_logκ_2d(darcy, truth_modes_center),  color_lim, ax_logk[3])
-ax_logk[3].set_title("Mean of modes close to truth")
+ax_logk[3].set_title("Mean close to truth")
 plot_field(darcy, compute_logκ_2d(darcy, mirror_modes_center),  color_lim, ax_logk[4])  
-ax_logk[4].set_title("Mean of modes close to mirror")
+ax_logk[4].set_title("Mean close to mirror")
 
 
 fig_logk.tight_layout()
